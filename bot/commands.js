@@ -74,7 +74,7 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
             const sign = tx.direction === 'out' ? '-' : '+';
             const colorDot = tx.token === 'USDT' ? '🟢' : '🔴';
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
-            message += `${prefix} ${sign} ${exactAmount} ${colorDot}\n   <code>${tx.time}</code>\n<blockquote><code>${tx.otherAddr}</code></blockquote>\n`;
+            message += `${prefix} ${colorDot} ${sign} ${exactAmount}\n   ${tx.time}\n<blockquote><code>${tx.otherAddr}</code></blockquote>\n`;
         });
     }
     return message;
