@@ -1138,9 +1138,9 @@
         }
 
         function formatNumber(num) {
-            if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
-            if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
-            return num.toFixed(0);
+            if (num === 0) return '0';
+            const fixed = num % 1 === 0 ? num.toString() : num.toFixed(2);
+            return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
 
         function updateTopInfo() {
