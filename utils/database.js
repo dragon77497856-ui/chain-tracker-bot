@@ -1,7 +1,7 @@
 // ================= Supabase 資料庫 =================
 const https = require('https');
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://npafcozxfnzvrbapvpgh.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wYWZjb3p4Zm56dnJiYXB2cGdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2MjI1MjksImV4cCI6MjA2NTE5ODUyOX0.e49B4cUkmzcBPFLmONYCv3qKMEH7vOIl8T8pjxmJLMw';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://hqbznevamhbmpevmwjuw.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_secret_PzVNgx38g3Px1YgXEsAUGg_x8L0wrzz';
 const BOT_ID = 'chain_tracker_bot';
 
 async function supabaseRequest(method, endpoint, body = null) {
