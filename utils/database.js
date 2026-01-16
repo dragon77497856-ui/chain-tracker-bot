@@ -86,7 +86,55 @@ async function saveData(store) {
     }
 }
 
+// ================= 母機器權限檢查 =================
+// 連接母機器的 Supabase 檢查 permissions 表
+async function checkPermission(telegramId, botName = 'chain-tracker-bot') {
+    try {
+        // 先檢查是否有全部機器人權限 (*)
+        const allPerms = await supabaseRequest('GET',
+            `permissions?telegram_id=eq.${telegramId}&bot_name=eq.*&select=expires_at`);
+
+        if (allPerms && allPerms.length > 0) {
+            const perm = allPerms[0];
+            // 檢查是否過期
+            if (!perm.expires_at || new Date(perm.expires_at) > new Date()) {
+                return { hasPermission: true, expiresAt: perm.expires_at };
+            }
+        }
+
+        // 檢查特定機器人權限
+        const botPerms = await supabaseRequest('GET',
+            `permissions?telegram_id=eq.${telegramId}&bot_name=eq.${botName}&select=expires_at`);
+
+        if (botPerms && botPerms.length > 0) {
+            const perm = botPerms[0];
+            if (!perm.expires_at || new Date(perm.expires_at) > new Date()) {
+                return { hasPermission: true, expiresAt: perm.expires_at };
+            }
+        }
+
+        return { hasPermission: false, expiresAt: null };
+    } catch (e) {
+        console.error('checkPermission error:', e.message);
+        return { hasPermission: false, expiresAt: null };
+    }
+}
+
+// 檢查是否為管理員（從母機器的 admins 表）
+async function checkIsAdmin(telegramId) {
+    try {
+        const result = await supabaseRequest('GET',
+            `admins?telegram_id=eq.${telegramId}&select=telegram_id`);
+        return result && result.length > 0;
+    } catch (e) {
+        console.error('checkIsAdmin error:', e.message);
+        return false;
+    }
+}
+
 module.exports = {
     loadData,
-    saveData
+    saveData,
+    checkPermission,
+    checkIsAdmin
 };

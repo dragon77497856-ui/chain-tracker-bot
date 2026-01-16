@@ -3,6 +3,18 @@ const { shortAddr, formatNumber, formatRange, getDefaultSettings, escapeHtml } =
 const { fetchAddressBalance, fetchFilteredTransactions } = require('../api/tron');
 
 const MAX_FREE_ADDRESSES = 5;
+const SUPER_ADMIN = '5666999482';
+const MEMBER_BOT_LINK = 'https://t.me/YOUR_MEMBER_BOT'; // 母機器連結
+
+// 無權限提示訊息
+const NO_PERMISSION_MSG = `❌ <b>您尚未開通會員</b>
+
+此功能需要會員權限才能使用。
+
+請前往會員管理中心購買會員：
+👉 @TronMemberBot
+
+購買後即可使用所有功能！`;
 
 // 主鍵盤
 const mainKeyboard = {
@@ -11,17 +23,23 @@ const mainKeyboard = {
     persistent: true
 };
 
-// 權限檢查
-function isSuperAdmin(userId, store) {
-    return store.superAdmins.has(String(userId));
+// 權限檢查（本地快取 + 母機器檢查）
+function isSuperAdmin(userId) {
+    return String(userId) === SUPER_ADMIN;
 }
 
 function isAdmin(userId, store) {
-    return store.admins.has(String(userId)) || isSuperAdmin(userId, store);
+    return store.admins.has(String(userId)) || isSuperAdmin(userId);
 }
 
-function isUser(userId, store) {
-    return store.users.has(String(userId)) || isAdmin(userId, store);
+// 檢查用戶是否有權限（從母機器 Supabase）
+async function hasPermission(userId, db) {
+    // 超級管理員直接通過
+    if (isSuperAdmin(userId)) return true;
+
+    // 檢查母機器權限
+    const result = await db.checkPermission(String(userId), 'chain-tracker-bot');
+    return result.hasPermission;
 }
 
 // 構建總覽消息
@@ -130,6 +148,12 @@ function setupCommands(bot, store, PUBLIC_URL, db) {
         const userId = msg.from.id;
         const address = match[1];
 
+        // 檢查權限
+        const hasPerm = await hasPermission(userId, db);
+        if (!hasPerm) {
+            return bot.sendMessage(chatId, NO_PERMISSION_MSG, { parse_mode: 'HTML' });
+        }
+
         if (!address) {
             return bot.sendMessage(chatId, '❌ 請提供地址\n\n示例：<code>/track TXyz...</code>', { parse_mode: 'HTML' });
         }
@@ -141,6 +165,11 @@ function setupCommands(bot, store, PUBLIC_URL, db) {
 
     // 地址監控按鈕
     bot.onText(/📍 地址監控/, async (msg) => {
+        // 檢查權限
+        const hasPerm = await hasPermission(msg.from.id, db);
+        if (!hasPerm) {
+            return bot.sendMessage(msg.chat.id, NO_PERMISSION_MSG, { parse_mode: 'HTML' });
+        }
         await showAddressMonitor(bot, msg.chat.id, msg.from.id, store);
     });
 
@@ -236,6 +265,11 @@ function setupCommands(bot, store, PUBLIC_URL, db) {
 
         // 直接發送地址查詢
         if (text.startsWith('T') && text.length === 34) {
+            // 檢查權限
+            const hasPerm = await hasPermission(userId, db);
+            if (!hasPerm) {
+                return bot.sendMessage(chatId, NO_PERMISSION_MSG, { parse_mode: 'HTML' });
+            }
             await handleTrackAddress(bot, chatId, userId, text, store, PUBLIC_URL);
             return;
         }
@@ -400,5 +434,5 @@ module.exports = {
     MAX_FREE_ADDRESSES,
     isSuperAdmin,
     isAdmin,
-    isUser
+    hasPermission
 };
