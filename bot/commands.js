@@ -76,17 +76,15 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
         ? `所有 ${formatRange(settings.unified.min, settings.unified.max)}`
         : `USDT ${formatRange(settings.usdt.min, settings.usdt.max)} | TRX ${formatRange(settings.trx.min, settings.trx.max)}`;
 
-    message += `\n📋 <b>近10筆交易</b> <i>(${rangeStr})</i>\n`;
-
     if (recentTxs.length === 0) {
-        message += `無符合條件的交易\n`;
+        message += `\n無符合條件的交易\n`;
     } else {
-        message += `<code>| 時間 | 類型 | 地址 | 金額</code>\n`;
+        message += `\n<code>| 時間        | 類型 | 地址 | 金額</code>\n`;
         recentTxs.forEach((tx) => {
             const type = tx.direction === 'out' ? '支出' : '收入';
             const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
-            message += `<blockquote><code>${shortTime}  |${type}|    |${exactAmount}</code></blockquote><code>${tx.otherAddr}</code>\n`;
+            message += `<blockquote><code>|${shortTime} |${type}|    |${exactAmount}</code></blockquote><code>${tx.otherAddr}</code>\n`;
         });
     }
     return message;
