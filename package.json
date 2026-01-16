@@ -1,0 +1,15 @@
+{
+  "name": "chain-tracker-bot",
+  "version": "4.0.0",
+  "description": "TRON Chain Tracker Bot with visualization",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

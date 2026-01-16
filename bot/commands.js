@@ -1,0 +1,404 @@
+// ================= Bot 命令 =================
+const { shortAddr, formatNumber, formatRange, getDefaultSettings, escapeHtml } = require('../utils/helpers');
+const { fetchAddressBalance, fetchFilteredTransactions } = require('../api/tron');
+
+const MAX_FREE_ADDRESSES = 5;
+
+// 主鍵盤
+const mainKeyboard = {
+    keyboard: [[{ text: '📍 地址監控' }, { text: '👤 個人中心' }]],
+    resize_keyboard: true,
+    persistent: true
+};
+
+// 權限檢查
+function isSuperAdmin(userId, store) {
+    return store.superAdmins.has(String(userId));
+}
+
+function isAdmin(userId, store) {
+    return store.admins.has(String(userId)) || isSuperAdmin(userId, store);
+}
+
+function isUser(userId, store) {
+    return store.users.has(String(userId)) || isAdmin(userId, store);
+}
+
+// 構建總覽消息
+function buildOverviewMessage(address, recentTxs, settings) {
+    let message = `🏦 <b>錢包查詢</b>\n\n📍 地址: <code>${address}</code>\n`;
+    if (recentTxs.length > 0) message += `⏰ 最後活動: ${recentTxs[0].time}\n`;
+
+    let rangeStr = settings.mode === 'simple'
+        ? `所有 ${formatRange(settings.unified.min, settings.unified.max)}`
+        : `USDT ${formatRange(settings.usdt.min, settings.usdt.max)} | TRX ${formatRange(settings.trx.min, settings.trx.max)}`;
+
+    message += `\n📋 <b>近10筆交易</b> <i>(${rangeStr})</i>\n`;
+
+    if (recentTxs.length === 0) {
+        message += `└ 無符合條件的交易\n`;
+    } else {
+        recentTxs.forEach((tx, i) => {
+            const prefix = i === recentTxs.length - 1 ? '└' : '├';
+            const sign = tx.direction === 'out' ? '➖' : '➕';
+            message += `${prefix} ${sign} ${tx.amount}\n<blockquote><code>${tx.otherAddr}</code></blockquote>   📅 ${tx.time}\n`;
+        });
+    }
+    return message;
+}
+
+// 構建主鍵盤
+function buildMainKeyboard(address, PUBLIC_URL) {
+    const chartUrl = `${PUBLIC_URL}/chart?address=${address}`;
+    return {
+        inline_keyboard: [
+            [
+                { text: '📋 完整列表', callback_data: `list_${address}_1` },
+                { text: '📈 可視化圖表', url: chartUrl }
+            ],
+            [
+                { text: '⚙️ 設置範圍', callback_data: `range_${address}` },
+                { text: '🔄 刷新', callback_data: `refresh_${address}` }
+            ]
+        ]
+    };
+}
+
+// 設置命令處理
+function setupCommands(bot, store, PUBLIC_URL, db) {
+    const { userSettings, userCache, userInputState, userData, balanceCache, dailyStats } = store;
+
+    function getUserData(userId) {
+        if (!userData[userId]) userData[userId] = { addresses: [], membership: 'none' };
+        return userData[userId];
+    }
+
+    // /start 命令
+    bot.onText(/\/start/, async (msg) => {
+        const userId = String(msg.from.id);
+
+        // 自動加入用戶列表
+        if (!store.users.has(userId) && !isAdmin(userId, store)) {
+            store.users.add(userId);
+            await db.saveData(store);
+        }
+
+        bot.sendMessage(msg.chat.id,
+            `🔍 <b>TRON 錢包追蹤器</b>\n\n` +
+            `追蹤任意地址的資產與交易記錄\n\n` +
+            `<b>使用方法：</b>\n直接發送地址即可查詢\n\n` +
+            `<b>功能：</b>\n` +
+            `• 📋 近10筆交易記錄\n` +
+            `• 📈 可視化資金流向圖\n` +
+            `• ⚙️ 自定金額範圍過濾\n` +
+            `• 📄 分頁瀏覽半年內交易\n` +
+            `• 📍 地址監控（餘額追蹤）`,
+            { parse_mode: 'HTML', reply_markup: mainKeyboard }
+        );
+    });
+
+    // /settings 命令（管理員專用）
+    bot.onText(/\/settings/, async (msg) => {
+        const userId = String(msg.from.id);
+        if (!isAdmin(userId, store)) {
+            return bot.sendMessage(msg.chat.id, '❌ 此功能僅限管理員使用');
+        }
+
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: '👤 用戶管理', callback_data: 'settings_users' }],
+                [{ text: '📋 用戶列表', callback_data: 'settings_userlist' }]
+            ]
+        };
+
+        // 超級管理員可見的選項
+        if (isSuperAdmin(userId, store)) {
+            keyboard.inline_keyboard.push(
+                [{ text: '👑 管理員管理', callback_data: 'settings_admins' }]
+            );
+        }
+
+        await bot.sendMessage(msg.chat.id, '⚙️ <b>系統設置</b>', {
+            parse_mode: 'HTML',
+            reply_markup: keyboard
+        });
+    });
+
+    // /track 命令
+    bot.onText(/\/track(?:\s+(\S+))?/, async (msg, match) => {
+        const chatId = msg.chat.id;
+        const userId = msg.from.id;
+        const address = match[1];
+
+        if (!address) {
+            return bot.sendMessage(chatId, '❌ 請提供地址\n\n示例：<code>/track TXyz...</code>', { parse_mode: 'HTML' });
+        }
+        if (!address.startsWith('T') || address.length !== 34) {
+            return bot.sendMessage(chatId, '❌ 無效的 TRON 地址');
+        }
+        await handleTrackAddress(bot, chatId, userId, address, store, PUBLIC_URL);
+    });
+
+    // 地址監控按鈕
+    bot.onText(/📍 地址監控/, async (msg) => {
+        await showAddressMonitor(bot, msg.chat.id, msg.from.id, store);
+    });
+
+    // 個人中心按鈕
+    bot.onText(/👤 個人中心/, async (msg) => {
+        await showUserCenter(bot, msg.chat.id, msg.from, store);
+    });
+
+    // 處理用戶輸入
+    bot.on('message', async (msg) => {
+        if (!msg.text) return;
+        if (msg.text.startsWith('/')) return;
+        if (msg.text === '📍 地址監控' || msg.text === '👤 個人中心') return;
+
+        const chatId = msg.chat.id;
+        const userId = msg.from.id;
+        const text = msg.text.trim();
+        const inputState = userInputState[userId];
+
+        // 處理添加地址
+        if (inputState && inputState.waiting === 'add_address') {
+            if (!text.startsWith('T') || text.length !== 34) {
+                return bot.sendMessage(chatId, '❌ 無效的 TRON 地址，請重新輸入');
+            }
+            const user = getUserData(userId);
+            if (user.addresses.includes(text)) {
+                userInputState[userId] = null;
+                return bot.sendMessage(chatId, '❌ 該地址已在監控列表中');
+            }
+            user.addresses.push(text);
+            userInputState[userId] = null;
+            balanceCache[text] = { addedAt: Date.now(), lastCheck: Date.now() };
+            initDailyStats(text, dailyStats);
+            await db.saveData(store);
+            await bot.sendMessage(chatId, `✅ 已添加地址: <code>${shortAddr(text)}</code>`, { parse_mode: 'HTML' });
+            await showAddressMonitor(bot, chatId, userId, store);
+            return;
+        }
+
+        // 處理添加用戶 UID
+        if (inputState && inputState.waiting === 'add_user') {
+            const uid = text.trim();
+            if (!/^\d+$/.test(uid)) {
+                return bot.sendMessage(chatId, '❌ 請輸入有效的用戶 UID（純數字）');
+            }
+            store.users.add(uid);
+            userInputState[userId] = null;
+            await db.saveData(store);
+            await bot.sendMessage(chatId, `✅ 已添加用戶: <code>${uid}</code>`, { parse_mode: 'HTML' });
+            return;
+        }
+
+        // 處理添加管理員 UID
+        if (inputState && inputState.waiting === 'add_admin') {
+            const uid = text.trim();
+            if (!/^\d+$/.test(uid)) {
+                return bot.sendMessage(chatId, '❌ 請輸入有效的用戶 UID（純數字）');
+            }
+            store.admins.add(uid);
+            userInputState[userId] = null;
+            await db.saveData(store);
+            await bot.sendMessage(chatId, `✅ 已添加管理員: <code>${uid}</code>`, { parse_mode: 'HTML' });
+            return;
+        }
+
+        // 處理範圍設置輸入
+        if (inputState && inputState.waiting && inputState.waiting.includes('_')) {
+            const value = parseInt(text);
+            if (isNaN(value) || value < 0) {
+                return bot.sendMessage(chatId, '❌ 請輸入有效的數字（≥0）');
+            }
+            const [type, minmax] = inputState.waiting.split('_');
+            const settings = userSettings[userId] || getDefaultSettings();
+
+            if (type === 'unified') settings.unified[minmax] = value;
+            else if (type === 'usdt') { settings.usdt[minmax] = value; settings.mode = 'advanced'; }
+            else if (type === 'trx') { settings.trx[minmax] = value; settings.mode = 'advanced'; }
+
+            userSettings[userId] = settings;
+            userInputState[userId] = null;
+            if (userCache[userId]) userCache[userId].txs = null;
+
+            const rangeStr = type === 'unified'
+                ? formatRange(settings.unified.min, settings.unified.max)
+                : formatRange(settings[type].min, settings[type].max);
+
+            await bot.sendMessage(chatId,
+                `✅ ${type === 'unified' ? '統一' : type.toUpperCase()}範圍已設置：${rangeStr}\n\n請點擊「返回」查看結果`,
+                { reply_markup: { inline_keyboard: [[{ text: '◀️ 返回', callback_data: `back_${inputState.address}` }]] } }
+            );
+            return;
+        }
+
+        // 直接發送地址查詢
+        if (text.startsWith('T') && text.length === 34) {
+            await handleTrackAddress(bot, chatId, userId, text, store, PUBLIC_URL);
+            return;
+        }
+    });
+}
+
+// 處理地址查詢
+async function handleTrackAddress(bot, chatId, userId, address, store, PUBLIC_URL) {
+    const { userSettings, userCache } = store;
+
+    if (!userSettings[userId]) userSettings[userId] = getDefaultSettings();
+    const loadingMsg = await bot.sendMessage(chatId, '⏳ 正在查詢鏈上數據...');
+
+    try {
+        const settings = userSettings[userId];
+        const recentTxs = await fetchFilteredTransactions(address, 10, settings);
+        userCache[userId] = { address, txs: null, lastFetch: 0 };
+        const message = buildOverviewMessage(address, recentTxs, settings);
+        const keyboard = buildMainKeyboard(address, PUBLIC_URL);
+        await bot.deleteMessage(chatId, loadingMsg.message_id);
+        await bot.sendMessage(chatId, message, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard,
+            disable_web_page_preview: true
+        });
+    } catch (e) {
+        console.error('Track error:', e);
+        await bot.editMessageText('❌ 查詢失敗: ' + e.message, {
+            chat_id: chatId,
+            message_id: loadingMsg.message_id
+        });
+    }
+}
+
+// 顯示地址監控
+async function showAddressMonitor(bot, chatId, userId, store) {
+    const { userData, balanceCache, dailyStats } = store;
+
+    function getUserData(id) {
+        if (!userData[id]) userData[id] = { addresses: [], membership: 'none' };
+        return userData[id];
+    }
+
+    const user = getUserData(userId);
+    const addresses = user.addresses;
+    let message = `📍 <b>地址監控</b>\n🔔 狀態: 運行中 \n\n`;
+
+    if (addresses.length === 0) {
+        message += `尚未添加任何監控地址\n\n請點擊「添加地址」或直接發送地址`;
+    } else {
+        let totalUsdt = 0, totalTrx = 0, totalIncome = 0, totalExpense = 0;
+
+        for (let i = 0; i < addresses.length; i++) {
+            const addr = addresses[i];
+            if (i > 0) await new Promise(r => setTimeout(r, 500));
+            const balance = await fetchAddressBalance(addr);
+
+            if (!balanceCache[addr]) {
+                balanceCache[addr] = { addedAt: Date.now(), lastCheck: Date.now() };
+            }
+
+            const today = new Date().toISOString().slice(0, 10);
+            let stats = dailyStats[addr];
+
+            if (!stats || stats.date !== today || (stats.income === 0 && stats.expense === 0)) {
+                await new Promise(r => setTimeout(r, 300));
+                stats = { date: today, income: 0, expense: 0 };
+                const recentTxs = await fetchFilteredTransactions(addr, 50, { mode: 'simple', unified: { min: 0, max: 0 } }, false);
+                const todayStart = new Date(today).getTime();
+                recentTxs.forEach(tx => {
+                    if (tx.timestamp >= todayStart && tx.token === 'USDT') {
+                        if (tx.direction === 'in') stats.income += tx.rawAmount;
+                        else stats.expense += tx.rawAmount;
+                    }
+                });
+                dailyStats[addr] = stats;
+            }
+
+            message += `<b>[${i + 1}]</b> 監控中\n<blockquote><code>${addr}</code></blockquote>`;
+            message += `   💰 ${formatNumber(balance.usdt)} USDT | ${formatNumber(balance.trx)} TRX\n`;
+            message += `   📈 +${formatNumber(stats.income)} | 📉 -${formatNumber(stats.expense)}\n`;
+            totalUsdt += balance.usdt;
+            totalTrx += balance.trx;
+            totalIncome += stats.income;
+            totalExpense += stats.expense;
+        }
+        message += `\n━━━ 今日總計 ━━━\n`;
+        message += `💰 餘額: ${formatNumber(totalUsdt)} USDT\n`;
+        message += `📈 收入: ${formatNumber(totalIncome)} USDT\n`;
+        message += `📉 支出: ${formatNumber(totalExpense)} USDT\n`;
+        message += `💵 利潤: ${formatNumber(totalIncome - totalExpense)} USDT`;
+    }
+
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '➕ 添加地址', callback_data: 'monitor_add' },
+                { text: '🗑️ 刪除地址', callback_data: 'monitor_delete' }
+            ],
+            [{ text: '🔄 刷新列表', callback_data: 'monitor_refresh' }],
+            [{ text: '❌ 關閉', callback_data: 'monitor_close' }]
+        ]
+    };
+
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+        disable_web_page_preview: true
+    });
+}
+
+// 顯示個人中心
+async function showUserCenter(bot, chatId, fromUser, store) {
+    const { userData } = store;
+
+    function getUserData(id) {
+        if (!userData[id]) userData[id] = { addresses: [], membership: 'none' };
+        return userData[id];
+    }
+
+    const userId = fromUser.id;
+    const user = getUserData(userId);
+    const now = new Date();
+    const timeStr = now.toLocaleString('zh-TW', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        timeZone: 'Asia/Taipei'
+    });
+    const userName = escapeHtml(fromUser.first_name + (fromUser.last_name ? ' ' + fromUser.last_name : ''));
+
+    let role = '一般用戶';
+    if (isSuperAdmin(userId, store)) role = '超級管理員';
+    else if (isAdmin(userId, store)) role = '管理員';
+
+    let message = `🕐 當前時間: ${timeStr}\n\n`;
+    message += `用戶: ${userName}\n`;
+    message += `用戶ID: ${userId}\n`;
+    message += `身份: ${role}\n`;
+    message += `可監控地址數: ${MAX_FREE_ADDRESSES}\n`;
+    message += `當前監控地址數: ${user.addresses.length}`;
+
+    await bot.sendMessage(chatId, message, { parse_mode: 'HTML', reply_markup: mainKeyboard });
+}
+
+// 初始化每日統計
+function initDailyStats(address, dailyStats) {
+    dailyStats[address] = {
+        date: new Date().toISOString().slice(0, 10),
+        income: 0,
+        expense: 0
+    };
+}
+
+module.exports = {
+    setupCommands,
+    handleTrackAddress,
+    showAddressMonitor,
+    showUserCenter,
+    buildOverviewMessage,
+    buildMainKeyboard,
+    mainKeyboard,
+    MAX_FREE_ADDRESSES,
+    isSuperAdmin,
+    isAdmin,
+    isUser
+};
