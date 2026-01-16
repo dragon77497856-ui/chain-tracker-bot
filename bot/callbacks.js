@@ -311,11 +311,13 @@ function setupCallbacks(bot, store, PUBLIC_URL, db) {
                 const loadingMsg = await bot.sendMessage(chatId, '⏳ 正在查詢...');
                 try {
                     const settings = userSettings[userId];
-                    const [balanceInfo, recentTxs] = await Promise.all([
+                    const statsSettings = { mode: 'simple', unified: { min: 0, max: 0 } };
+                    const [balanceInfo, recentTxs, allTxs] = await Promise.all([
                         fetchAddressBalance(address),
-                        fetchFilteredTransactions(address, 10, settings)
+                        fetchFilteredTransactions(address, 10, settings),
+                        fetchFilteredTransactions(address, 100, statsSettings)
                     ]);
-                    const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo);
+                    const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo, allTxs);
                     const keyboard = buildMainKeyboard(address, PUBLIC_URL);
                     await bot.deleteMessage(chatId, loadingMsg.message_id);
                     await bot.sendMessage(chatId, message, {
@@ -536,11 +538,13 @@ async function handleRefresh(bot, chatId, userId, address, messageId, store, PUB
     if (userCache[userId]) userCache[userId].txs = null;
 
     try {
-        const [balanceInfo, recentTxs] = await Promise.all([
+        const statsSettings = { mode: 'simple', unified: { min: 0, max: 0 } };
+        const [balanceInfo, recentTxs, allTxs] = await Promise.all([
             fetchAddressBalance(address),
-            fetchFilteredTransactions(address, 10, settings)
+            fetchFilteredTransactions(address, 10, settings),
+            fetchFilteredTransactions(address, 100, statsSettings)
         ]);
-        const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo);
+        const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo, allTxs);
         const keyboard = buildMainKeyboard(address, PUBLIC_URL);
         await bot.editMessageText(message, {
             chat_id: chatId,

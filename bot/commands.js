@@ -47,15 +47,27 @@ async function hasPermission(userId, db) {
 }
 
 // 構建總覽消息
-function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) {
+function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, allTxs = []) {
     let message = `🏦 <b>錢包查詢</b>\n\n📍 地址: <code>${address}</code>\n`;
 
     // 顯示餘額和創建時間
     if (balanceInfo) {
         message += `💰 餘額: <b>${formatExactNumber(balanceInfo.usdt)}</b> USDT | <b>${formatExactNumber(balanceInfo.trx)}</b> TRX\n`;
-        if (balanceInfo.createTime) {
-            message += `📆 創建時間: ${formatWalletDate(balanceInfo.createTime)}\n`;
+    }
+
+    // 計算 30 天內 USDT 支出和收入
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    let usdtIn = 0, usdtOut = 0;
+    allTxs.forEach(tx => {
+        if (tx.token === 'USDT' && tx.timestamp >= thirtyDaysAgo) {
+            if (tx.direction === 'in') usdtIn += tx.rawAmount;
+            else usdtOut += tx.rawAmount;
         }
+    });
+    message += `📊 30天活動  支出: ${formatExactNumber(usdtOut)}  收入: ${formatExactNumber(usdtIn)}\n`;
+
+    if (balanceInfo && balanceInfo.createTime) {
+        message += `📆 創建時間: ${formatWalletDate(balanceInfo.createTime)}\n`;
     }
 
     if (recentTxs.length > 0) message += `⏰ 最後活動: ${recentTxs[0].time}\n`;
@@ -300,13 +312,15 @@ async function handleTrackAddress(bot, chatId, userId, address, store, PUBLIC_UR
 
     try {
         const settings = userSettings[userId];
-        // 並行獲取餘額和交易記錄
-        const [balanceInfo, recentTxs] = await Promise.all([
+        // 並行獲取餘額和交易記錄（獲取更多用於 30 天統計）
+        const statsSettings = { mode: 'simple', unified: { min: 0, max: 0 } };
+        const [balanceInfo, recentTxs, allTxs] = await Promise.all([
             fetchAddressBalance(address),
-            fetchFilteredTransactions(address, 10, settings)
+            fetchFilteredTransactions(address, 10, settings),
+            fetchFilteredTransactions(address, 100, statsSettings)
         ]);
         userCache[userId] = { address, txs: null, lastFetch: 0 };
-        const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo);
+        const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo, allTxs);
         const keyboard = buildMainKeyboard(address, PUBLIC_URL);
         await bot.deleteMessage(chatId, loadingMsg.message_id);
         await bot.sendMessage(chatId, message, {
