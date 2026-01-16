@@ -69,7 +69,7 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
     if (recentTxs.length === 0) {
         message += `無符合條件的交易\n`;
     } else {
-        message += `| 時間 | 類型 | 地址 | 金額\n`;
+        message += `<code>| 時間 | 類型 | 地址 | 金額</code>\n`;
         recentTxs.forEach((tx) => {
             const type = tx.direction === 'out' ? '支出' : '收入';
             const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
