@@ -1,5 +1,5 @@
 // ================= 按鈕回調處理 =================
-const { shortAddr, formatRange, getDefaultSettings, escapeHtml } = require('../utils/helpers');
+const { shortAddr, formatRange, formatExactNumber, getDefaultSettings, escapeHtml } = require('../utils/helpers');
 const { fetchFilteredTransactions, fetchAddressBalance } = require('../api/tron');
 const { showAddressMonitor, buildOverviewMessage, buildMainKeyboard, MAX_FREE_ADDRESSES, isSuperAdmin, isAdmin } = require('./commands');
 
@@ -434,9 +434,12 @@ async function handleListView(bot, chatId, userId, address, page, messageId, sto
         if (pageTxs.length === 0) {
             message += `無符合條件的交易記錄`;
         } else {
-            pageTxs.forEach((tx, i) => {
-                message += `${i === pageTxs.length - 1 ? '└' : '├'} ${tx.direction === 'out' ? '➖' : '➕'} ${tx.amount}\n`;
-                message += `<blockquote>${tx.otherAddr}</blockquote>   📅 ${tx.time}\n`;
+            message += `<code>| 時間 | 類型 | 地址 | 金額</code>\n`;
+            pageTxs.forEach((tx) => {
+                const type = tx.direction === 'out' ? '支出' : '收入';
+                const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
+                const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
+                message += `<blockquote><code>${shortTime}  |${type}|    |${exactAmount}</code></blockquote><code>${tx.otherAddr}</code>\n`;
             });
         }
 
