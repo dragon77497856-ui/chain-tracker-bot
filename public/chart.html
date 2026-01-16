@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta charset="UTF-8">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- Dagre for graph layout -->
-    <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
     <style>
         :root { --bg-color: #1a1a1d; --panel-bg: rgba(30, 30, 35, 0.95); --border-color: #33333a; --accent-green: #4fa28a; --accent-red: #ba3029; --text-main: #e0e0e0; --text-sub: #888890; --gold: #f0b90b; }
         * { margin: 0; padding: 0; box-sizing: border-box; outline: none; }
@@ -27,15 +25,15 @@
             will-change: transform;
             transform-origin: 0 0;
         }
-        .node-box { fill: #1e1e24; stroke: #3a3a42; stroke-width: 1; cursor: pointer; transition: all 0.2s; }
-        .node-box:hover { stroke: var(--accent-green); stroke-width: 2; }
+        .node-box { fill: #1e1e24; stroke: #3a3a42; stroke-width: 1; cursor: pointer; }
+        .node-box:hover { stroke: var(--accent-green); }
         .node-box.target { fill: rgba(240, 185, 11, 0.15); stroke: var(--gold); stroke-width: 2; }
         .node-box.expanded { fill: rgba(79, 162, 138, 0.15); stroke: var(--accent-green); stroke-width: 2; }
         .node-text { fill: #aaa; font-family: 'Consolas', 'Monaco', monospace; font-size: 11px; pointer-events: none; }
         .node-text.target { fill: var(--gold); }
         .node-text.expanded { fill: var(--accent-green); }
 
-        .edge-path { fill: none; stroke-width: 1.5; opacity: 0.8; }
+        .edge-path { fill: none; stroke-width: 1.5; }
         .edge-path.usdt { stroke: var(--accent-green); }
         .edge-path.trx { stroke: var(--accent-red); }
         .edge-arrow { stroke: none; }
@@ -46,7 +44,7 @@
         .label-text:hover { filter: brightness(1.3); }
         .label-text.usdt { fill: var(--accent-green); }
         .label-text.trx { fill: var(--accent-red); }
-        .label-bg { fill: rgba(26, 26, 29, 0.95); cursor: pointer; rx: 3; }
+        .label-bg { fill: rgba(26, 26, 29, 0.9); cursor: pointer; }
         .label-bg:hover { fill: rgba(40, 40, 45, 0.95); }
 
         .top-bar { position: fixed; top: 0; left: 0; right: 0; height: 48px; background: #0d0d0d; border-bottom: 1px solid #2a2a2a; display: flex; align-items: center; padding: 0 16px; gap: 12px; z-index: 200; }
@@ -182,8 +180,9 @@
         // ================= 常數設定 =================
         const NODE_WIDTH = 140;
         const NODE_HEIGHT = 32;
-        const RANK_SEP = 200;  // 層級間距
-        const NODE_SEP = 50;   // 節點間距
+        const V_GAP = 22;           // 標籤垂直間距
+        const FORK_DIST = 80;       // 分岔點距離
+        const LEVEL_GAP = 400;      // 層級間距
 
         // ================= 設定 =================
         const CONFIG = (function() {
@@ -206,13 +205,10 @@
             trxMax: CONFIG.TRX_MAX
         };
 
-        // ================= 圖資料結構 =================
-        const graphData = {
-            nodes: new Map(),      // address -> nodeData
-            edges: new Map(),      // edgeKey -> edgeData
-            expandedCenters: new Set(),
-            rawTransactions: []
-        };
+        // ================= 全域變數 =================
+        let rawTransactions = [];
+        let expandedCenters = new Set();  // 已展開的中心地址
+        let nodeDataMap = {};  // 儲存節點資料供點擊使用
 
         // ================= 視圖控制 =================
         const view = {
@@ -221,6 +217,7 @@
             y: 0,
             minScale: 0.1,
             maxScale: 5,
+            // 慣性
             velocityX: 0,
             velocityY: 0,
             friction: 0.92,
@@ -231,7 +228,7 @@
         async function init() {
             if (!CONFIG.ROOT_ADDRESS) {
                 document.getElementById('loading').classList.add('hide');
-                showToast('請提供 address 參數');
+                showToast('⚠️ 請提供 address 參數');
                 return;
             }
 
@@ -241,8 +238,8 @@
             document.getElementById('trxMax').value = FILTER.trxMax || '';
 
             // 工具列事件
-            document.getElementById('zoomIn').onclick = () => zoom(1.3);
-            document.getElementById('zoomOut').onclick = () => zoom(0.77);
+            document.getElementById('zoomIn').onclick = zoomIn;
+            document.getElementById('zoomOut').onclick = zoomOut;
             document.getElementById('fitScreen').onclick = fitScreen;
             document.getElementById('resetView').onclick = resetAndReload;
             document.getElementById('filterToggle').onclick = toggleFilterPanel;
@@ -263,15 +260,281 @@
                 FILTER.trxMin = parseFloat(document.getElementById('trxMin').value) || 0;
                 FILTER.trxMax = parseFloat(document.getElementById('trxMax').value) || 0;
                 render();
-                showToast('篩選已套用');
+                showToast('✅ 篩選已套用');
             };
 
+            // 拖曳與縮放
             setupDragAndZoom();
 
             await loadData(CONFIG.ROOT_ADDRESS);
             document.getElementById('loading').classList.add('hide');
             updateTopInfo();
-            fitScreen();
+        }
+
+        function setupDragAndZoom() {
+            const container = document.getElementById('svgContainer');
+            const svg = document.getElementById('svg');
+
+            let isDragging = false;
+            let lastX = 0, lastY = 0;
+            let lastTime = 0;
+
+            // 更新視圖變換
+            function updateTransform() {
+                svg.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+            }
+
+            // 慣性動畫
+            function inertiaAnimation() {
+                if (Math.abs(view.velocityX) < 0.5 && Math.abs(view.velocityY) < 0.5) {
+                    view.animationId = null;
+                    return;
+                }
+
+                view.x += view.velocityX;
+                view.y += view.velocityY;
+                view.velocityX *= view.friction;
+                view.velocityY *= view.friction;
+
+                updateTransform();
+                view.animationId = requestAnimationFrame(inertiaAnimation);
+            }
+
+            // 停止慣性
+            function stopInertia() {
+                if (view.animationId) {
+                    cancelAnimationFrame(view.animationId);
+                    view.animationId = null;
+                }
+                view.velocityX = 0;
+                view.velocityY = 0;
+            }
+
+            // 滑鼠事件
+            container.addEventListener('mousedown', e => {
+                if (e.target.closest('.node-box, .label-text, .label-bg')) return;
+                e.preventDefault();
+                stopInertia();
+                isDragging = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                lastTime = Date.now();
+                container.classList.add('dragging');
+            });
+
+            window.addEventListener('mousemove', e => {
+                if (!isDragging) return;
+                e.preventDefault();
+
+                const dx = e.clientX - lastX;
+                const dy = e.clientY - lastY;
+                const now = Date.now();
+                const dt = now - lastTime;
+
+                view.x += dx;
+                view.y += dy;
+
+                // 計算速度用於慣性
+                if (dt > 0) {
+                    view.velocityX = dx * 0.6;
+                    view.velocityY = dy * 0.6;
+                }
+
+                lastX = e.clientX;
+                lastY = e.clientY;
+                lastTime = now;
+
+                updateTransform();
+            });
+
+            window.addEventListener('mouseup', e => {
+                if (!isDragging) return;
+                isDragging = false;
+                container.classList.remove('dragging');
+
+                // 啟動慣性動畫
+                if (Math.abs(view.velocityX) > 1 || Math.abs(view.velocityY) > 1) {
+                    inertiaAnimation();
+                }
+            });
+
+            // 點擊空白處關閉面板
+            container.addEventListener('click', e => {
+                if (e.target === svg || e.target.tagName === 'svg') {
+                    closePanel();
+                }
+            });
+
+            // 滾輪縮放
+            container.addEventListener('wheel', e => {
+                e.preventDefault();
+                stopInertia();
+
+                const rect = container.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                // 計算滑鼠在 SVG 座標系中的位置
+                const svgX = (mouseX - view.x) / view.scale;
+                const svgY = (mouseY - view.y) / view.scale;
+
+                // 更平滑的縮放因子
+                const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+                const newScale = Math.max(view.minScale, Math.min(view.maxScale, view.scale * zoomFactor));
+
+                // 調整位置讓滑鼠指向的點保持不變
+                view.x = mouseX - svgX * newScale;
+                view.y = mouseY - svgY * newScale;
+                view.scale = newScale;
+
+                updateTransform();
+            }, { passive: false });
+
+            // 觸控支持
+            let touchStartDist = 0;
+            let touchStartScale = 1;
+            let touchStartX = 0, touchStartY = 0;
+            let touchStartViewX = 0, touchStartViewY = 0;
+
+            container.addEventListener('touchstart', e => {
+                stopInertia();
+                if (e.touches.length === 1) {
+                    // 單指拖曳
+                    isDragging = true;
+                    lastX = e.touches[0].clientX;
+                    lastY = e.touches[0].clientY;
+                    lastTime = Date.now();
+                    touchStartX = lastX;
+                    touchStartY = lastY;
+                    touchStartViewX = view.x;
+                    touchStartViewY = view.y;
+                } else if (e.touches.length === 2) {
+                    // 雙指縮放
+                    isDragging = false;
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    touchStartDist = Math.sqrt(dx * dx + dy * dy);
+                    touchStartScale = view.scale;
+                    touchStartX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    touchStartY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    touchStartViewX = view.x;
+                    touchStartViewY = view.y;
+                }
+            }, { passive: true });
+
+            container.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if (e.touches.length === 1 && isDragging) {
+                    const dx = e.touches[0].clientX - lastX;
+                    const dy = e.touches[0].clientY - lastY;
+                    const now = Date.now();
+                    const dt = now - lastTime;
+
+                    view.x += dx;
+                    view.y += dy;
+
+                    if (dt > 0) {
+                        view.velocityX = dx * 0.6;
+                        view.velocityY = dy * 0.6;
+                    }
+
+                    lastX = e.touches[0].clientX;
+                    lastY = e.touches[0].clientY;
+                    lastTime = now;
+                    updateTransform();
+                } else if (e.touches.length === 2) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+
+                    const rect = container.getBoundingClientRect();
+                    const svgX = (touchStartX - rect.left - touchStartViewX) / touchStartScale;
+                    const svgY = (touchStartY - rect.top - touchStartViewY) / touchStartScale;
+
+                    const newScale = Math.max(view.minScale, Math.min(view.maxScale, touchStartScale * (dist / touchStartDist)));
+                    view.scale = newScale;
+                    view.x = centerX - rect.left - svgX * newScale;
+                    view.y = centerY - rect.top - svgY * newScale;
+
+                    updateTransform();
+                }
+            }, { passive: false });
+
+            container.addEventListener('touchend', e => {
+                if (e.touches.length === 0) {
+                    isDragging = false;
+                    if (Math.abs(view.velocityX) > 1 || Math.abs(view.velocityY) > 1) {
+                        inertiaAnimation();
+                    }
+                }
+            }, { passive: true });
+
+            // 初始更新
+            updateTransform();
+        }
+
+        function zoomIn(clientX, clientY) {
+            const container = document.getElementById('svgContainer');
+            const rect = container.getBoundingClientRect();
+            const mouseX = clientX !== undefined ? clientX - rect.left : rect.width / 2;
+            const mouseY = clientY !== undefined ? clientY - rect.top : rect.height / 2;
+
+            const svgX = (mouseX - view.x) / view.scale;
+            const svgY = (mouseY - view.y) / view.scale;
+
+            const newScale = Math.min(view.maxScale, view.scale * 1.3);
+            view.x = mouseX - svgX * newScale;
+            view.y = mouseY - svgY * newScale;
+            view.scale = newScale;
+
+            document.getElementById('svg').style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+        }
+
+        function zoomOut(clientX, clientY) {
+            const container = document.getElementById('svgContainer');
+            const rect = container.getBoundingClientRect();
+            const mouseX = clientX !== undefined ? clientX - rect.left : rect.width / 2;
+            const mouseY = clientY !== undefined ? clientY - rect.top : rect.height / 2;
+
+            const svgX = (mouseX - view.x) / view.scale;
+            const svgY = (mouseY - view.y) / view.scale;
+
+            const newScale = Math.max(view.minScale, view.scale / 1.3);
+            view.x = mouseX - svgX * newScale;
+            view.y = mouseY - svgY * newScale;
+            view.scale = newScale;
+
+            document.getElementById('svg').style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+        }
+
+        function fitScreen() {
+            const container = document.getElementById('svgContainer');
+            const svg = document.getElementById('svg');
+            const svgWidth = parseInt(svg.getAttribute('width')) || 800;
+            const svgHeight = parseInt(svg.getAttribute('height')) || 600;
+
+            // 計算適合畫面的縮放比例
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            const scaleX = containerWidth / svgWidth;
+            const scaleY = containerHeight / svgHeight;
+            view.scale = Math.min(scaleX, scaleY, 1) * 0.9;
+
+            // 置中
+            view.x = (containerWidth - svgWidth * view.scale) / 2;
+            view.y = (containerHeight - svgHeight * view.scale) / 2;
+
+            svg.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+        }
+
+        function toggleFilterPanel() {
+            const panel = document.getElementById('filterPanel');
+            const toggle = document.getElementById('filterToggle');
+            const isCollapsed = panel.classList.toggle('collapsed');
+            document.body.classList.toggle('panel-collapsed', isCollapsed);
+            toggle.innerHTML = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
         }
 
         // ================= 資料載入 =================
@@ -281,42 +544,49 @@
                 const res = await fetch(url);
                 const data = await res.json();
                 if (!data.edges || data.edges.length === 0) {
-                    showToast('該地址無符合條件的交易');
+                    showToast('⚠️ 該地址無符合條件的交易');
                     return false;
                 }
-
-                // 標記中心地址
                 const newTx = data.edges.map(e => ({
                     ...e,
                     centerAddr: addr
                 }));
-
                 if (append) {
-                    graphData.rawTransactions = [...graphData.rawTransactions, ...newTx];
+                    rawTransactions = [...rawTransactions, ...newTx];
                 } else {
-                    graphData.rawTransactions = newTx;
-                    graphData.nodes.clear();
-                    graphData.edges.clear();
+                    rawTransactions = newTx;
                 }
-
-                graphData.expandedCenters.add(addr);
-                buildGraph();
+                expandedCenters.add(addr);
                 render();
                 return true;
             } catch (e) {
                 console.error(e);
-                showToast('載入失敗');
+                showToast('❌ 載入失敗');
                 return false;
             }
         }
 
-        // ================= 建立圖結構 =================
-        function buildGraph() {
-            graphData.nodes.clear();
-            graphData.edges.clear();
+        async function resetAndReload() {
+            rawTransactions = [];
+            expandedCenters = new Set();
+            closePanel();
+            document.getElementById('loading').classList.remove('hide');
+            await loadData(CONFIG.ROOT_ADDRESS);
+            document.getElementById('loading').classList.add('hide');
+            fitScreen();
+        }
+
+        // ================= SVG 繪製 =================
+        const LABEL_HEIGHT = 16;  // 標籤高度（含間距）
+        const LABEL_MIN_GAP = 4;  // 標籤最小間距
+
+        function render() {
+            const svg = document.getElementById('svg');
+            svg.innerHTML = '';
+            nodeDataMap = {};
 
             // 篩選交易
-            const filteredTx = graphData.rawTransactions.filter(tx => {
+            const filteredTx = rawTransactions.filter(tx => {
                 const isUsdt = tx.token === 'USDT';
                 const isTrx = tx.token === 'TRX';
                 if (isUsdt && !FILTER.showUsdt) return false;
@@ -332,165 +602,302 @@
                 return true;
             });
 
-            // 收集所有地址
-            const allAddresses = new Set();
-            allAddresses.add(CONFIG.ROOT_ADDRESS);
+            // 計算佈局
+            const layout = calculateLayout(filteredTx);
+
+            // 計算所有標籤位置（含碰撞檢測）
+            const labelPositions = calculateLabelPositions(layout);
+
+            // 根據標籤位置調整畫布高度
+            let maxLabelY = layout.height;
+            let minLabelY = 0;
+            labelPositions.forEach(group => {
+                group.forEach(y => {
+                    if (y > maxLabelY - 50) maxLabelY = y + 50;
+                    if (y < minLabelY + 50) minLabelY = y - 50;
+                });
+            });
+            const adjustedHeight = Math.max(layout.height, maxLabelY);
+
+            // 設定 SVG 大小
+            svg.setAttribute('width', layout.width);
+            svg.setAttribute('height', adjustedHeight);
+            svg.setAttribute('viewBox', `0 0 ${layout.width} ${adjustedHeight}`);
+
+            // 先畫邊，再畫節點（節點在上層）
+            layout.edgeGroups.forEach((g, groupIdx) => {
+                drawEdgeGroup(svg, g, labelPositions[groupIdx]);
+            });
+            Object.values(layout.nodes).forEach(n => drawNode(svg, n));
+
+            updateStats(filteredTx);
+        }
+
+        // 計算所有標籤位置，避免重疊
+        function calculateLabelPositions(layout) {
+            const allLabels = [];
+
+            // 第一步：收集所有標籤的理想位置
+            // 參考 MetaSleuth：標籤 Y = 兩節點的中點，多筆交易圍繞中點分散
+            layout.edgeGroups.forEach((group, groupIdx) => {
+                const centerNode = group.type === 'outflow' ? group.fromNode : group.toNode;
+                const otherNode = group.type === 'outflow' ? group.toNode : group.fromNode;
+                const sourceNode = group.type === 'outflow' ? centerNode : otherNode;
+                const targetNode = group.type === 'outflow' ? otherNode : centerNode;
+
+                const flowCount = group.flows.length;
+                // 兩節點的垂直中點
+                const midY = (sourceNode.y + targetNode.y) / 2 + NODE_HEIGHT / 2;
+
+                group.flows.forEach((tx, flowIdx) => {
+                    const timeStr = tx.txList?.[0]?.time || '';
+                    const labelText = `[${timeStr}] ${tx.amount}`;
+                    const labelW = labelText.length * 6;
+
+                    // 計算標籤的 X 範圍
+                    const minX = Math.min(sourceNode.x, targetNode.x);
+                    const maxX = Math.max(sourceNode.x, targetNode.x);
+
+                    // 理想位置：圍繞中點分散
+                    const offsetY = (flowIdx - (flowCount - 1) / 2) * V_GAP;
+                    const idealY = midY + offsetY;
+
+                    allLabels.push({
+                        groupIdx,
+                        flowIdx,
+                        idealY,
+                        finalY: idealY,
+                        labelW,
+                        xRange: [minX, maxX + NODE_WIDTH]
+                    });
+                });
+            });
+
+            // 第二步：碰撞檢測 - 只處理 X 範圍重疊的標籤
+            // 按 idealY 排序
+            allLabels.sort((a, b) => a.idealY - b.idealY);
+
+            // 追蹤已佔用的 Y 位置
+            const occupiedRanges = [];
+
+            allLabels.forEach(label => {
+                let y = label.idealY;
+                let attempts = 0;
+                const maxAttempts = 50;
+
+                while (attempts < maxAttempts) {
+                    let hasCollision = false;
+
+                    for (const occupied of occupiedRanges) {
+                        // 檢查 X 範圍是否重疊
+                        const xOverlap = !(label.xRange[1] < occupied.xMin || label.xRange[0] > occupied.xMax);
+                        if (!xOverlap) continue;
+
+                        // 檢查 Y 範圍是否重疊
+                        const yOverlap = Math.abs(y - occupied.y) < (LABEL_HEIGHT + LABEL_MIN_GAP);
+                        if (yOverlap) {
+                            hasCollision = true;
+                            // 往下移動
+                            y = occupied.y + LABEL_HEIGHT + LABEL_MIN_GAP;
+                            break;
+                        }
+                    }
+
+                    if (!hasCollision) break;
+                    attempts++;
+                }
+
+                label.finalY = y;
+                occupiedRanges.push({
+                    y: y,
+                    xMin: label.xRange[0],
+                    xMax: label.xRange[1]
+                });
+            });
+
+            // 第三步：整理結果
+            const result = layout.edgeGroups.map(() => []);
+            allLabels.forEach(label => {
+                result[label.groupIdx][label.flowIdx] = label.finalY;
+            });
+
+            return result;
+        }
+
+        function calculateLayout(filteredTx) {
+            const layout = { nodes: {}, edgeGroups: [], width: 0, height: 0 };
+
+            // 計算每個地址相對於各中心的淨流量
+            // netFlow > 0 表示該地址是淨流出（給中心錢）→ 放左側
+            // netFlow < 0 表示該地址是淨流入（從中心拿錢）→ 放右側
+            const centerRelations = {};  // center -> { addr -> { inAmount, outAmount, txs } }
 
             filteredTx.forEach(tx => {
-                const fromAddr = cleanAddress(tx.from);
-                const toAddr = cleanAddress(tx.to);
-                allAddresses.add(fromAddr);
-                allAddresses.add(toAddr);
+                const center = tx.centerAddr;
+                const other = tx.direction === 'in'
+                    ? tx.from.replace(/_center|_in|_out$/g, '')
+                    : tx.to.replace(/_center|_in|_out$/g, '');
+
+                if (!centerRelations[center]) centerRelations[center] = {};
+                if (!centerRelations[center][other]) {
+                    centerRelations[center][other] = { inAmount: 0, outAmount: 0, inTxs: [], outTxs: [] };
+                }
+
+                if (tx.direction === 'in') {
+                    // 對方轉給中心 = 對方是來源
+                    centerRelations[center][other].inAmount += tx.rawAmount || 0;
+                    centerRelations[center][other].inTxs.push(tx);
+                } else {
+                    // 中心轉給對方 = 對方是去向
+                    centerRelations[center][other].outAmount += tx.rawAmount || 0;
+                    centerRelations[center][other].outTxs.push(tx);
+                }
             });
+
+            // BFS 計算每個地址的層級（基於淨流量）
+            const addrLevel = {};
+            addrLevel[CONFIG.ROOT_ADDRESS] = 0;
+
+            const queue = [CONFIG.ROOT_ADDRESS];
+            const processed = new Set();
+
+            while (queue.length > 0) {
+                const center = queue.shift();
+                if (processed.has(center)) continue;
+                processed.add(center);
+
+                const centerLvl = addrLevel[center] || 0;
+                const relations = centerRelations[center];
+                if (!relations) continue;
+
+                Object.entries(relations).forEach(([addr, data]) => {
+                    if (addrLevel[addr] !== undefined) return;
+
+                    // 淨流量 = 流入中心 - 流出中心
+                    const netFlow = data.inAmount - data.outAmount;
+
+                    if (netFlow > 0) {
+                        // 對方給中心更多 → 對方是來源 → 放左側
+                        addrLevel[addr] = centerLvl - 1;
+                    } else {
+                        // 中心給對方更多 → 對方是去向 → 放右側
+                        addrLevel[addr] = centerLvl + 1;
+                    }
+
+                    if (expandedCenters.has(addr)) {
+                        queue.push(addr);
+                    }
+                });
+            }
+
+            // 按層級分組地址
+            const levelGroups = {};
+            Object.entries(addrLevel).forEach(([addr, lvl]) => {
+                if (!levelGroups[lvl]) levelGroups[lvl] = [];
+                levelGroups[lvl].push(addr);
+            });
+
+            // 計算層級範圍
+            const levels = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
+            if (levels.length === 0) return layout;
+
+            const minLevel = Math.min(...levels);
+
+            // 計算最大節點數（用於高度）
+            let maxNodesInLevel = 1;
+            Object.values(levelGroups).forEach(addrs => {
+                maxNodesInLevel = Math.max(maxNodesInLevel, addrs.length);
+            });
+
+            const totalHeight = Math.max(maxNodesInLevel * (NODE_HEIGHT + 40) + 100, 400);
+            const centerY = totalHeight / 2;
 
             // 建立節點
-            allAddresses.forEach(addr => {
-                graphData.nodes.set(addr, {
-                    address: addr,
-                    isTarget: addr === CONFIG.ROOT_ADDRESS,
-                    isExpanded: graphData.expandedCenters.has(addr),
-                    x: 0,
-                    y: 0
+            levels.forEach(lvl => {
+                const addrs = levelGroups[lvl];
+                const xPos = 50 + (lvl - minLevel) * (NODE_WIDTH + LEVEL_GAP);
+                const startY = centerY - (addrs.length * (NODE_HEIGHT + 40)) / 2;
+
+                addrs.forEach((addr, i) => {
+                    const id = 'node_' + addr;
+                    const short = addr.slice(0, 6) + '...' + addr.slice(-4);
+                    const isRoot = addr === CONFIG.ROOT_ADDRESS;
+                    const isExpanded = expandedCenters.has(addr);
+
+                    layout.nodes[id] = {
+                        id, address: addr,
+                        label: isRoot ? '🎯 ' + short : short,
+                        x: xPos, y: startY + i * (NODE_HEIGHT + 40),
+                        level: lvl,
+                        isTarget: isRoot,
+                        isExpanded,
+                        isSource: lvl < addrLevel[CONFIG.ROOT_ADDRESS]
+                    };
+                    nodeDataMap[id] = { address: addr, isSource: lvl < 0, isExpanded };
                 });
             });
 
-            // 建立邊（合併同方向同幣種的交易）
-            const edgeAggregator = new Map();
+            // 建立邊群組（按照實際交易方向）
+            Object.entries(centerRelations).forEach(([center, relations]) => {
+                const centerNode = layout.nodes['node_' + center];
+                if (!centerNode) return;
 
-            filteredTx.forEach(tx => {
-                const fromAddr = cleanAddress(tx.from);
-                const toAddr = cleanAddress(tx.to);
-                const edgeKey = `${fromAddr}->${toAddr}:${tx.token}`;
+                Object.entries(relations).forEach(([addr, data]) => {
+                    const otherNode = layout.nodes['node_' + addr];
+                    if (!otherNode) return;
 
-                if (!edgeAggregator.has(edgeKey)) {
-                    edgeAggregator.set(edgeKey, {
-                        from: fromAddr,
-                        to: toAddr,
-                        token: tx.token,
-                        totalAmount: 0,
-                        txList: []
-                    });
-                }
+                    // 入帳邊（對方 → 中心）
+                    if (data.inTxs.length > 0) {
+                        const fromNode = otherNode;
+                        const toNode = centerNode;
+                        layout.edgeGroups.push({
+                            type: 'inflow',
+                            fromNode, toNode,
+                            startX: fromNode.x + NODE_WIDTH,
+                            startY: fromNode.y + NODE_HEIGHT / 2,
+                            forkX: fromNode.x + NODE_WIDTH + FORK_DIST,
+                            mergeX: toNode.x - FORK_DIST,
+                            endX: toNode.x,
+                            endY: toNode.y + NODE_HEIGHT / 2,
+                            flows: data.inTxs
+                        });
+                    }
 
-                const edge = edgeAggregator.get(edgeKey);
-                edge.totalAmount += tx.rawAmount;
-                if (tx.txList) {
-                    edge.txList.push(...tx.txList);
-                } else {
-                    edge.txList.push({
-                        amount: tx.rawAmount,
-                        amountStr: tx.amount,
-                        time: tx.time || '',
-                        hash: tx.hash || ''
-                    });
-                }
-            });
-
-            graphData.edges = edgeAggregator;
-        }
-
-        function cleanAddress(addr) {
-            if (!addr) return '';
-            return addr.replace(/_center|_in|_out$/g, '');
-        }
-
-        // ================= Dagre 佈局 =================
-        function calculateLayout() {
-            const g = new dagre.graphlib.Graph();
-
-            g.setGraph({
-                rankdir: 'LR',      // 左到右
-                ranksep: RANK_SEP,  // 層級間距
-                nodesep: NODE_SEP,  // 節點間距
-                marginx: 50,
-                marginy: 50
-            });
-
-            g.setDefaultEdgeLabel(() => ({}));
-
-            // 添加節點
-            graphData.nodes.forEach((node, addr) => {
-                g.setNode(addr, {
-                    width: NODE_WIDTH,
-                    height: NODE_HEIGHT,
-                    label: addr
+                    // 出帳邊（中心 → 對方）
+                    if (data.outTxs.length > 0) {
+                        const fromNode = centerNode;
+                        const toNode = otherNode;
+                        layout.edgeGroups.push({
+                            type: 'outflow',
+                            fromNode, toNode,
+                            startX: fromNode.x + NODE_WIDTH,
+                            startY: fromNode.y + NODE_HEIGHT / 2,
+                            forkX: fromNode.x + NODE_WIDTH + FORK_DIST,
+                            mergeX: toNode.x - FORK_DIST,
+                            endX: toNode.x,
+                            endY: toNode.y + NODE_HEIGHT / 2,
+                            flows: data.outTxs
+                        });
+                    }
                 });
-            });
-
-            // 添加邊
-            graphData.edges.forEach((edge, key) => {
-                g.setEdge(edge.from, edge.to, {
-                    weight: Math.log10(edge.totalAmount + 1) + 1
-                });
-            });
-
-            // 執行佈局
-            dagre.layout(g);
-
-            // 更新節點位置
-            g.nodes().forEach(addr => {
-                const nodeData = g.node(addr);
-                const node = graphData.nodes.get(addr);
-                if (node && nodeData) {
-                    node.x = nodeData.x - NODE_WIDTH / 2;
-                    node.y = nodeData.y - NODE_HEIGHT / 2;
-                }
             });
 
             // 計算畫布大小
             let maxX = 0, maxY = 0;
-            graphData.nodes.forEach(node => {
-                maxX = Math.max(maxX, node.x + NODE_WIDTH + 100);
-                maxY = Math.max(maxY, node.y + NODE_HEIGHT + 100);
+            Object.values(layout.nodes).forEach(n => {
+                maxX = Math.max(maxX, n.x + NODE_WIDTH + 100);
+                maxY = Math.max(maxY, n.y + NODE_HEIGHT + 50);
             });
+            layout.width = maxX;
+            layout.height = Math.max(maxY, totalHeight);
 
-            return { width: Math.max(maxX, 800), height: Math.max(maxY, 600) };
+            return layout;
         }
 
-        // ================= SVG 繪製 =================
-        function render() {
-            const svg = document.getElementById('svg');
-            svg.innerHTML = '';
-
-            if (graphData.nodes.size === 0) return;
-
-            buildGraph();
-            const { width, height } = calculateLayout();
-
-            svg.setAttribute('width', width);
-            svg.setAttribute('height', height);
-            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-
-            // 建立 defs 用於箭頭
-            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-            defs.innerHTML = `
-                <marker id="arrowhead-usdt" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                    <polygon points="0 0, 8 3, 0 6" fill="var(--accent-green)"/>
-                </marker>
-                <marker id="arrowhead-trx" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                    <polygon points="0 0, 8 3, 0 6" fill="var(--accent-red)"/>
-                </marker>
-            `;
-            svg.appendChild(defs);
-
-            // 繪製邊
-            const edgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            edgeGroup.setAttribute('class', 'edges');
-            graphData.edges.forEach((edge, key) => drawEdge(edgeGroup, edge));
-            svg.appendChild(edgeGroup);
-
-            // 繪製節點
-            const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            nodeGroup.setAttribute('class', 'nodes');
-            graphData.nodes.forEach((node, addr) => drawNode(nodeGroup, node));
-            svg.appendChild(nodeGroup);
-
-            updateStats();
-        }
-
-        function drawNode(parent, node) {
+        function drawNode(svg, node) {
             const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             g.setAttribute('class', 'node-group');
+            g.setAttribute('data-id', node.id);
 
             const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
             rect.setAttribute('x', node.x);
@@ -499,6 +906,7 @@
             rect.setAttribute('height', NODE_HEIGHT);
             rect.setAttribute('rx', 4);
 
+            // 設定節點樣式類別
             let boxClass = 'node-box';
             let textClass = 'node-text';
             if (node.isTarget) {
@@ -509,6 +917,7 @@
                 textClass += ' expanded';
             }
             rect.setAttribute('class', boxClass);
+            rect.setAttribute('data-id', node.id);
             rect.onclick = () => handleNodeClick(node);
             rect.ondblclick = () => handleNodeDblClick(node);
             g.appendChild(rect);
@@ -518,68 +927,160 @@
             text.setAttribute('y', node.y + NODE_HEIGHT / 2 + 4);
             text.setAttribute('text-anchor', 'middle');
             text.setAttribute('class', textClass);
-            const shortAddr = node.address.slice(0, 6) + '...' + node.address.slice(-4);
-            text.textContent = node.isTarget ? '🎯 ' + shortAddr : shortAddr;
+            text.textContent = node.label;
             g.appendChild(text);
 
-            parent.appendChild(g);
+            svg.appendChild(g);
         }
 
-        function drawEdge(parent, edge) {
-            const fromNode = graphData.nodes.get(edge.from);
-            const toNode = graphData.nodes.get(edge.to);
-            if (!fromNode || !toNode) return;
+        function drawEdgeGroup(svg, group, labelYPositions) {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            const flows = group.flows;
 
-            const tokenClass = edge.token === 'USDT' ? 'usdt' : 'trx';
-
-            // 計算起點和終點
-            const startX = fromNode.x + NODE_WIDTH;
-            const startY = fromNode.y + NODE_HEIGHT / 2;
-            const endX = toNode.x;
-            const endY = toNode.y + NODE_HEIGHT / 2;
-
-            // 計算控制點（貝茲曲線）
-            const midX = (startX + endX) / 2;
-            const dx = endX - startX;
-            const cpOffset = Math.min(Math.abs(dx) * 0.3, 100);
-
-            // 繪製曲線
-            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            const d = `M ${startX} ${startY} C ${startX + cpOffset} ${startY}, ${endX - cpOffset} ${endY}, ${endX - 8} ${endY}`;
-            path.setAttribute('d', d);
-            path.setAttribute('class', `edge-path ${tokenClass}`);
-            path.setAttribute('marker-end', `url(#arrowhead-${tokenClass})`);
-            parent.appendChild(path);
-
-            // 繪製標籤
-            const labelX = midX;
-            const labelY = (startY + endY) / 2;
-            const labelText = formatNumber(edge.totalAmount) + ' ' + edge.token;
-            if (edge.txList.length > 1) {
-                labelText + ` (${edge.txList.length}筆)`;
+            // 確定哪個是中心節點，哪個是「其他」節點
+            let centerNode, otherNode, isOutflow;
+            if (group.type === 'outflow') {
+                centerNode = group.fromNode;
+                otherNode = group.toNode;
+                isOutflow = true;
+            } else {
+                centerNode = group.toNode;
+                otherNode = group.fromNode;
+                isOutflow = false;
             }
 
-            const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            const textWidth = labelText.length * 6 + 8;
-            labelBg.setAttribute('x', labelX - textWidth / 2);
-            labelBg.setAttribute('y', labelY - 10);
-            labelBg.setAttribute('width', textWidth);
-            labelBg.setAttribute('height', 16);
-            labelBg.setAttribute('class', 'label-bg');
-            labelBg.onclick = () => handleEdgeClick(edge);
-            parent.appendChild(labelBg);
+            // 確定資金流動的實際來源和目標
+            const sourceNode = isOutflow ? centerNode : otherNode;
+            const targetNode = isOutflow ? otherNode : centerNode;
 
-            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            label.setAttribute('x', labelX);
-            label.setAttribute('y', labelY + 3);
-            label.setAttribute('text-anchor', 'middle');
-            label.setAttribute('class', `label-text ${tokenClass}`);
-            label.textContent = labelText;
-            label.onclick = () => handleEdgeClick(edge);
-            parent.appendChild(label);
+            flows.forEach((tx, i) => {
+                const tokenClass = tx.token === 'USDT' ? 'usdt' : 'trx';
+                // 使用預先計算好的標籤 Y 位置（已處理碰撞）
+                const labelY = labelYPositions[i] || ((sourceNode.y + targetNode.y) / 2 + NODE_HEIGHT / 2);
+
+                // 計算曲線座標（從 source 到 target）
+                const goingRight = sourceNode.x < targetNode.x;
+                let startX, startY, endX, endY;
+
+                if (goingRight) {
+                    startX = sourceNode.x + NODE_WIDTH;
+                    startY = sourceNode.y + NODE_HEIGHT / 2;
+                    endX = targetNode.x;
+                    endY = targetNode.y + NODE_HEIGHT / 2;
+                } else {
+                    startX = sourceNode.x;
+                    startY = sourceNode.y + NODE_HEIGHT / 2;
+                    endX = targetNode.x + NODE_WIDTH;
+                    endY = targetNode.y + NODE_HEIGHT / 2;
+                }
+
+                // 標籤文字
+                const timeStr = tx.txList?.[0]?.time || '';
+                const labelText = `[${timeStr}] ${tx.amount}`;
+                const labelW = labelText.length * 6;
+                const labelX = (startX + endX) / 2;
+                const labelLeft = labelX - labelW / 2;
+                const labelRight = labelX + labelW / 2;
+
+                // 計算貝茲曲線控制點（參考 MetaSleuth：使用 50% 距離）
+                const seg1EndX = goingRight ? labelLeft : labelRight;
+                const seg2StartX = goingRight ? labelRight : labelLeft;
+                const ctrlX1 = startX + (seg1EndX - startX) * 0.5;
+                const ctrlX2 = seg2StartX + (endX - seg2StartX) * 0.5;
+
+                // 繪製曲線
+                const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+                path1.setAttribute('d', `M ${startX} ${startY} C ${ctrlX1} ${startY}, ${ctrlX1} ${labelY}, ${seg1EndX} ${labelY}`);
+                path2.setAttribute('d', `M ${seg2StartX} ${labelY} C ${ctrlX2} ${labelY}, ${ctrlX2} ${endY}, ${endX} ${endY}`);
+                path1.setAttribute('class', `edge-path ${tokenClass}`);
+                path2.setAttribute('class', `edge-path ${tokenClass}`);
+                g.appendChild(path1);
+
+                // 標籤水平線
+                const labelLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                labelLine.setAttribute('x1', labelLeft);
+                labelLine.setAttribute('y1', labelY);
+                labelLine.setAttribute('x2', labelRight);
+                labelLine.setAttribute('y2', labelY);
+                labelLine.setAttribute('class', `edge-path ${tokenClass}`);
+                g.appendChild(labelLine);
+
+                // 標籤背景（方便點擊）
+                const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                labelBg.setAttribute('x', labelLeft - 2);
+                labelBg.setAttribute('y', labelY - 14);
+                labelBg.setAttribute('width', labelW + 4);
+                labelBg.setAttribute('height', 12);
+                labelBg.setAttribute('rx', 2);
+                labelBg.setAttribute('class', 'label-bg');
+                labelBg.setAttribute('data-tx-index', i);
+                labelBg.onclick = () => handleLabelClick(tx);
+                g.appendChild(labelBg);
+
+                // 標籤文字
+                const labelTextEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                labelTextEl.setAttribute('x', labelLeft);
+                labelTextEl.setAttribute('y', labelY - 5);
+                labelTextEl.setAttribute('class', `label-text ${tokenClass}`);
+                labelTextEl.textContent = labelText;
+                labelTextEl.onclick = () => handleLabelClick(tx);
+                g.appendChild(labelTextEl);
+
+                g.appendChild(path2);
+
+                // 箭頭在目標節點，指向資金流入方向
+                const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                const arrowDir = goingRight ? -1 : 1;  // 箭頭方向
+                arrow.setAttribute('points', `${endX},${endY} ${endX+arrowDir*8},${endY-4} ${endX+arrowDir*8},${endY+4}`);
+                arrow.setAttribute('class', `edge-arrow ${tokenClass}`);
+                g.appendChild(arrow);
+            });
+
+            svg.appendChild(g);
         }
 
         // ================= 事件處理 =================
+        function handleLabelClick(tx) {
+            const panel = document.getElementById('detailPanel');
+            const content = document.getElementById('panelContent');
+            const linkBtn = document.getElementById('panelLink');
+            const typeLabel = document.getElementById('panelType');
+
+            typeLabel.textContent = '💸 交易詳情';
+
+            // 建立交易明細列表
+            let txListHtml = '';
+            if (tx.txList && tx.txList.length > 0) {
+                tx.txList.forEach((t, i) => {
+                    const hashLink = t.hash
+                        ? `<a href="https://tronscan.org/#/transaction/${t.hash}" target="_blank" style="color:#4fa28a;text-decoration:none;font-size:10px;">查看</a>`
+                        : '';
+                    txListHtml += `<div style="padding:6px 0;border-bottom:1px solid #2a2a2a;">
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:${tx.token === 'USDT' ? '#4fa28a' : '#ba3029'}">${t.amountStr || tx.amount}</span>
+                            ${hashLink}
+                        </div>
+                        <div style="font-size:10px;color:#666;margin-top:2px;">${t.time || ''}</div>
+                    </div>`;
+                });
+            }
+
+            const fromAddr = tx.from ? tx.from.replace(/_center|_in|_out$/g, '') : '';
+            const toAddr = tx.to ? tx.to.replace(/_center|_in|_out$/g, '') : '';
+
+            content.innerHTML = `
+                <div class="data-row"><div class="data-label">金額</div><div class="data-value" style="color: ${tx.token === 'USDT' ? '#4fa28a' : '#ba3029'}">${tx.amount}</div></div>
+                <div class="data-row"><div class="data-label">方向</div><div class="data-value">${tx.direction === 'in' ? '📥 轉入' : '📤 轉出'}</div></div>
+                <div class="data-row"><div class="data-label">來源</div><div class="data-value" style="font-size:10px;">${fromAddr}</div></div>
+                <div class="data-row"><div class="data-label">目標</div><div class="data-value" style="font-size:10px;">${toAddr}</div></div>
+                <div class="data-row"><div class="data-label">明細</div><div style="max-height:150px;overflow-y:auto;">${txListHtml || '<span style="color:#666">無</span>'}</div></div>
+            `;
+            linkBtn.style.display = 'none';
+            panel.classList.add('active');
+        }
+
         function handleNodeClick(node) {
             const panel = document.getElementById('detailPanel');
             const content = document.getElementById('panelContent');
@@ -588,194 +1089,50 @@
 
             if (node.isTarget) {
                 typeLabel.textContent = '🎯 目標地址';
-                content.innerHTML = `<div class="data-row"><div class="data-label">地址</div><div class="data-value" style="color: #f0b90b">${node.address}</div></div>`;
+                content.innerHTML = `<div class="data-row"><div class="data-label">地址</div><div class="data-value" style="color: #f0b90b">${CONFIG.ROOT_ADDRESS}</div></div>`;
+                linkBtn.href = 'https://tronscan.org/#/address/' + CONFIG.ROOT_ADDRESS;
             } else {
                 typeLabel.textContent = '📍 地址詳情';
-                const status = node.isExpanded ? '已展開' : '點擊兩下展開';
+                const role = node.isSource ? '📥 資金來源' : '📤 資金去向';
                 content.innerHTML = `
                     <div class="data-row"><div class="data-label">地址</div><div class="data-value" style="color: #4fa28a">${node.address}</div></div>
-                    <div class="data-row"><div class="data-label">狀態</div><div class="data-value">${status}</div></div>
+                    <div class="data-row"><div class="data-label">角色</div><div class="data-value">${role}</div></div>
                 `;
+                linkBtn.href = 'https://tronscan.org/#/address/' + node.address;
             }
-            linkBtn.href = 'https://tronscan.org/#/address/' + node.address;
             linkBtn.style.display = 'block';
             panel.classList.add('active');
         }
 
         async function handleNodeDblClick(node) {
-            if (graphData.expandedCenters.has(node.address)) {
-                showToast('此節點已展開');
+            // 已展開的節點不再展開
+            if (expandedCenters.has(node.address)) {
+                showToast('ℹ️ 此節點已展開');
                 return;
             }
 
-            showToast('載入 ' + node.address.slice(0, 8) + '...');
+            showToast('⏳ 載入 ' + node.address.slice(0, 8) + '...');
             const success = await loadData(node.address, true);
             if (success) {
-                showToast('已展開');
+                showToast('✅ 已展開');
             }
-        }
-
-        function handleEdgeClick(edge) {
-            const panel = document.getElementById('detailPanel');
-            const content = document.getElementById('panelContent');
-            const linkBtn = document.getElementById('panelLink');
-            const typeLabel = document.getElementById('panelType');
-
-            typeLabel.textContent = '💸 交易詳情';
-
-            let txListHtml = '';
-            if (edge.txList && edge.txList.length > 0) {
-                edge.txList.slice(0, 10).forEach((t, i) => {
-                    const hashLink = t.hash
-                        ? `<a href="https://tronscan.org/#/transaction/${t.hash}" target="_blank" style="color:#4fa28a;text-decoration:none;font-size:10px;">查看</a>`
-                        : '';
-                    txListHtml += `<div style="padding:6px 0;border-bottom:1px solid #2a2a2a;">
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:${edge.token === 'USDT' ? '#4fa28a' : '#ba3029'}">${t.amountStr || formatNumber(t.amount) + ' ' + edge.token}</span>
-                            ${hashLink}
-                        </div>
-                        <div style="font-size:10px;color:#666;margin-top:2px;">${t.time || ''}</div>
-                    </div>`;
-                });
-                if (edge.txList.length > 10) {
-                    txListHtml += `<div style="padding:6px 0;color:#666;font-size:10px;">...還有 ${edge.txList.length - 10} 筆</div>`;
-                }
-            }
-
-            content.innerHTML = `
-                <div class="data-row"><div class="data-label">總金額</div><div class="data-value" style="color: ${edge.token === 'USDT' ? '#4fa28a' : '#ba3029'}">${formatNumber(edge.totalAmount)} ${edge.token}</div></div>
-                <div class="data-row"><div class="data-label">交易筆數</div><div class="data-value">${edge.txList.length} 筆</div></div>
-                <div class="data-row"><div class="data-label">來源</div><div class="data-value" style="font-size:10px;">${edge.from}</div></div>
-                <div class="data-row"><div class="data-label">目標</div><div class="data-value" style="font-size:10px;">${edge.to}</div></div>
-                <div class="data-row"><div class="data-label">明細</div><div style="max-height:150px;overflow-y:auto;">${txListHtml || '<span style="color:#666">無</span>'}</div></div>
-            `;
-            linkBtn.style.display = 'none';
-            panel.classList.add('active');
         }
 
         function closePanel() {
             document.getElementById('detailPanel').classList.remove('active');
         }
 
-        // ================= 視圖控制 =================
-        function setupDragAndZoom() {
-            const container = document.getElementById('svgContainer');
-            const svg = document.getElementById('svg');
-
-            let isDragging = false;
-            let lastX = 0, lastY = 0;
-
-            function updateTransform() {
-                svg.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-            }
-
-            container.addEventListener('mousedown', e => {
-                if (e.target.closest('.node-box, .label-text, .label-bg')) return;
-                e.preventDefault();
-                isDragging = true;
-                lastX = e.clientX;
-                lastY = e.clientY;
-                container.classList.add('dragging');
-            });
-
-            window.addEventListener('mousemove', e => {
-                if (!isDragging) return;
-                e.preventDefault();
-                view.x += e.clientX - lastX;
-                view.y += e.clientY - lastY;
-                lastX = e.clientX;
-                lastY = e.clientY;
-                updateTransform();
-            });
-
-            window.addEventListener('mouseup', () => {
-                isDragging = false;
-                container.classList.remove('dragging');
-            });
-
-            container.addEventListener('click', e => {
-                if (e.target === svg || e.target.tagName === 'svg') {
-                    closePanel();
-                }
-            });
-
-            container.addEventListener('wheel', e => {
-                e.preventDefault();
-                const rect = container.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
-                const svgX = (mouseX - view.x) / view.scale;
-                const svgY = (mouseY - view.y) / view.scale;
-                const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-                const newScale = Math.max(view.minScale, Math.min(view.maxScale, view.scale * zoomFactor));
-                view.x = mouseX - svgX * newScale;
-                view.y = mouseY - svgY * newScale;
-                view.scale = newScale;
-                updateTransform();
-            }, { passive: false });
-
-            updateTransform();
-        }
-
-        function zoom(factor) {
-            const container = document.getElementById('svgContainer');
-            const rect = container.getBoundingClientRect();
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
-            const svgX = (centerX - view.x) / view.scale;
-            const svgY = (centerY - view.y) / view.scale;
-            const newScale = Math.max(view.minScale, Math.min(view.maxScale, view.scale * factor));
-            view.x = centerX - svgX * newScale;
-            view.y = centerY - svgY * newScale;
-            view.scale = newScale;
-            document.getElementById('svg').style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-        }
-
-        function fitScreen() {
-            const container = document.getElementById('svgContainer');
-            const svg = document.getElementById('svg');
-            const svgWidth = parseInt(svg.getAttribute('width')) || 800;
-            const svgHeight = parseInt(svg.getAttribute('height')) || 600;
-            const containerWidth = container.clientWidth;
-            const containerHeight = container.clientHeight;
-            const scaleX = containerWidth / svgWidth;
-            const scaleY = containerHeight / svgHeight;
-            view.scale = Math.min(scaleX, scaleY, 1) * 0.85;
-            view.x = (containerWidth - svgWidth * view.scale) / 2;
-            view.y = (containerHeight - svgHeight * view.scale) / 2;
-            svg.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-        }
-
-        function toggleFilterPanel() {
-            const panel = document.getElementById('filterPanel');
-            const toggle = document.getElementById('filterToggle');
-            const isCollapsed = panel.classList.toggle('collapsed');
-            document.body.classList.toggle('panel-collapsed', isCollapsed);
-            toggle.innerHTML = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
-        }
-
-        async function resetAndReload() {
-            graphData.rawTransactions = [];
-            graphData.expandedCenters = new Set();
-            graphData.nodes.clear();
-            graphData.edges.clear();
-            closePanel();
-            document.getElementById('loading').classList.remove('hide');
-            await loadData(CONFIG.ROOT_ADDRESS);
-            document.getElementById('loading').classList.add('hide');
-            fitScreen();
-        }
-
         // ================= 輔助函數 =================
-        function updateStats() {
+        function updateStats(filteredTx) {
             let usdtTotal = 0, trxTotal = 0;
-            graphData.edges.forEach(edge => {
-                if (edge.token === 'USDT') usdtTotal += edge.totalAmount;
-                else if (edge.token === 'TRX') trxTotal += edge.totalAmount;
+            filteredTx.forEach(tx => {
+                if (tx.token === 'USDT') usdtTotal += tx.rawAmount;
+                else if (tx.token === 'TRX') trxTotal += tx.rawAmount;
             });
+            const addrs = new Set(filteredTx.map(t => t.direction === 'in' ? t.from : t.to));
 
-            document.getElementById('statNodes').textContent = '地址數：' + graphData.nodes.size;
-            document.getElementById('statEdges').textContent = '交易邊：' + graphData.edges.size;
+            document.getElementById('statNodes').textContent = '交易數：' + filteredTx.length;
+            document.getElementById('statEdges').textContent = '地址數：' + addrs.size;
             document.getElementById('statUsdt').textContent = 'USDT 總額：' + formatNumber(usdtTotal);
             document.getElementById('statTrx').textContent = 'TRX 總額：' + formatNumber(trxTotal);
         }
@@ -783,7 +1140,7 @@
         function formatNumber(num) {
             if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
             if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
-            return num.toFixed(2);
+            return num.toFixed(0);
         }
 
         function updateTopInfo() {
