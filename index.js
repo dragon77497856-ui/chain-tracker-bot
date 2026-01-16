@@ -14,7 +14,8 @@ const db = require('./utils/database');
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const PORT = process.env.PORT || 3000;
 const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
-const USE_POLLING = !PUBLIC_URL || PUBLIC_URL.startsWith('http://127') || PUBLIC_URL.startsWith('http://localhost');
+// 使用 Polling 模式：沒有 URL、本地 URL、或 HTTP（非 HTTPS）
+const USE_POLLING = !PUBLIC_URL || PUBLIC_URL.startsWith('http://127') || PUBLIC_URL.startsWith('http://localhost') || (PUBLIC_URL.startsWith('http://') && !PUBLIC_URL.startsWith('https://'));
 
 // ================= 初始超級管理員 =================
 const SUPER_ADMIN = '5666999482';
