@@ -16,6 +16,9 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
 const USE_POLLING = !PUBLIC_URL || PUBLIC_URL.startsWith('http://127') || PUBLIC_URL.startsWith('http://localhost');
 
+// ================= 初始超級管理員 =================
+const SUPER_ADMIN = '5666999482';
+
 // ================= 共享數據存儲 =================
 const store = {
     userSettings: {},
@@ -25,7 +28,7 @@ const store = {
     balanceCache: {},
     dailyStats: {},
     admins: new Set(),
-    superAdmins: new Set(),
+    superAdmins: new Set([SUPER_ADMIN]),
     users: new Set()
 };
 
@@ -44,7 +47,10 @@ async function start() {
         const data = await db.loadData();
         if (data) {
             store.admins = new Set(data.admins || []);
-            store.superAdmins = new Set(data.superAdmins || []);
+            // 合併初始超級管理員
+            const loadedSuperAdmins = new Set(data.superAdmins || []);
+            loadedSuperAdmins.add(SUPER_ADMIN);
+            store.superAdmins = loadedSuperAdmins;
             store.users = new Set(data.users || []);
             store.userData = data.userData || {};
             console.log(`✅ 已載入 ${store.users.size} 個用戶, ${store.admins.size} 個管理員`);
