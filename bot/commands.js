@@ -53,8 +53,8 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
     // 顯示餘額
     if (balanceInfo) {
         message += `💰 餘額\n`;
-        message += `     USDT: <b>${formatExactNumber(balanceInfo.usdt)}</b>\n`;
-        message += `     TRX: <b>${formatExactNumber(balanceInfo.trx)}</b>\n`;
+        message += `     🟢 USDT: <b>${formatExactNumber(balanceInfo.usdt)}</b>\n`;
+        message += `     🔴 TRX: <b>${formatExactNumber(balanceInfo.trx)}</b>\n`;
     }
 
     // 計算 30 天內 USDT 支出和收入
@@ -67,8 +67,8 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
         }
     });
     message += `📊 30天活動\n`;
-    message += `     支出: <b>${formatExactNumber(usdtOut)}</b>\n`;
-    message += `     收入: <b>${formatExactNumber(usdtIn)}</b>\n`;
+    message += `     📤 支出: <b>${formatExactNumber(usdtOut)}</b>\n`;
+    message += `     📥 收入: <b>${formatExactNumber(usdtIn)}</b>\n`;
 
     if (balanceInfo && balanceInfo.createTime) {
         message += `📆 創建時間: ${formatWalletDate(balanceInfo.createTime)}\n`;
