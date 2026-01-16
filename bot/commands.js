@@ -67,14 +67,14 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
     message += `\n📋 <b>近10筆交易</b> <i>(${rangeStr})</i>\n`;
 
     if (recentTxs.length === 0) {
-        message += `└ 無符合條件的交易\n`;
+        message += `無符合條件的交易\n`;
     } else {
-        recentTxs.forEach((tx, i) => {
-            const prefix = i === recentTxs.length - 1 ? '└' : '├';
-            const sign = tx.direction === 'out' ? '-' : '+';
-            const colorDot = tx.token === 'USDT' ? '🟢' : '🔴';
+        message += `<code>| 時間 | 類型 | 地址 | 金額</code>\n`;
+        recentTxs.forEach((tx) => {
+            const type = tx.direction === 'out' ? '支出' : '收入';
+            const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
-            message += `${prefix} ${colorDot} ${sign} ${exactAmount}\n<blockquote>${tx.time}</blockquote><blockquote><code>${tx.otherAddr}</code></blockquote>\n`;
+            message += `<code>|${shortTime}|${type}|</code>\n<code>${tx.otherAddr}</code><code>|${exactAmount}</code>\n`;
         });
     }
     return message;
