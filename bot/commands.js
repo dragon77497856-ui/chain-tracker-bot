@@ -37,7 +37,11 @@ async function hasPermission(userId, db) {
     // 超級管理員直接通過
     if (isSuperAdmin(userId)) return true;
 
-    // 檢查母機器權限
+    // 檢查是否為管理員（從母機器 admins 表）
+    const isAdminUser = await db.checkIsAdmin(String(userId));
+    if (isAdminUser) return true;
+
+    // 檢查母機器權限（permissions 表）
     const result = await db.checkPermission(String(userId), 'chain-tracker-bot');
     return result.hasPermission;
 }
