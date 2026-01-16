@@ -18,7 +18,7 @@ const NO_PERMISSION_MSG = `❌ <b>您尚未開通會員</b>
 
 // 主鍵盤
 const mainKeyboard = {
-    keyboard: [[{ text: '📍 地址監控' }, { text: '👤 個人中心' }]],
+    keyboard: [[{ text: '📍 地址監控' }, { text: '📈 圖表' }, { text: '👤 個人中心' }]],
     resize_keyboard: true,
     persistent: true
 };
@@ -92,15 +92,11 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
 
 // 構建主鍵盤（第一頁）
 function buildMainKeyboard(address, PUBLIC_URL) {
-    const chartUrl = `${PUBLIC_URL}/chart?address=${address}`;
     return {
         inline_keyboard: [
             [
                 { text: '下一頁 ➡️', callback_data: `list_${address}_2` },
                 { text: '⚙️ 設置範圍', callback_data: `range_${address}` }
-            ],
-            [
-                { text: '📈 可視化圖表', url: chartUrl }
             ]
         ]
     };
@@ -202,11 +198,26 @@ function setupCommands(bot, store, PUBLIC_URL, db) {
         await showUserCenter(bot, msg.chat.id, msg.from, store);
     });
 
+    // 圖表按鈕
+    bot.onText(/📈 圖表/, async (msg) => {
+        const userId = msg.from.id;
+        const cache = userCache[userId];
+        if (cache && cache.address) {
+            const chartUrl = `${PUBLIC_URL}/chart?address=${cache.address}`;
+            await bot.sendMessage(msg.chat.id, `📈 <b>可視化圖表</b>\n\n<a href="${chartUrl}">點擊查看 ${cache.address.slice(0, 8)}... 的資金流向圖</a>`, {
+                parse_mode: 'HTML',
+                disable_web_page_preview: false
+            });
+        } else {
+            await bot.sendMessage(msg.chat.id, '❌ 請先查詢一個地址');
+        }
+    });
+
     // 處理用戶輸入
     bot.on('message', async (msg) => {
         if (!msg.text) return;
         if (msg.text.startsWith('/')) return;
-        if (msg.text === '📍 地址監控' || msg.text === '👤 個人中心') return;
+        if (msg.text === '📍 地址監控' || msg.text === '👤 個人中心' || msg.text === '📈 圖表') return;
 
         const chatId = msg.chat.id;
         const userId = msg.from.id;

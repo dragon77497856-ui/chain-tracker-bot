@@ -448,14 +448,10 @@ async function handleListView(bot, chatId, userId, address, page, messageId, sto
         navButtons.push({ text: `${currentPage} / ${totalPages}`, callback_data: 'noop' });
         if (currentPage < totalPages) navButtons.push({ text: '下一頁 ➡️', callback_data: `list_${address}_${currentPage + 1}` });
 
-        const chartUrl = `${PUBLIC_URL}/chart?address=${address}`;
         const keyboard = {
             inline_keyboard: [
                 navButtons,
-                [
-                    { text: '⚙️ 設置範圍', callback_data: `range_${address}` },
-                    { text: '📈 可視化圖表', url: chartUrl }
-                ]
+                [{ text: '⚙️ 設置範圍', callback_data: `range_${address}` }]
             ]
         };
 
