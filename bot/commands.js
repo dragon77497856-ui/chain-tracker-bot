@@ -72,7 +72,7 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
         recentTxs.forEach((tx, i) => {
             const prefix = i === recentTxs.length - 1 ? '└' : '├';
             const sign = tx.direction === 'out' ? '➖' : '➕';
-            const tokenIcon = tx.token === 'USDT' ? '💵' : '🔷';
+            const tokenIcon = tx.token === 'USDT' ? '<tg-emoji emoji-id="5359437015752401733">💵</tg-emoji>' : '🔷';
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
             message += `${prefix} ${sign} ${exactAmount}\n<blockquote><code>${tx.otherAddr}</code></blockquote>   ${tokenIcon} <i>${tx.time}</i>\n`;
         });
