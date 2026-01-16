@@ -72,8 +72,9 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
         recentTxs.forEach((tx, i) => {
             const prefix = i === recentTxs.length - 1 ? '└' : '├';
             const sign = tx.direction === 'out' ? '-' : '+';
+            const colorDot = tx.token === 'USDT' ? '🟢' : '🔴';
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
-            message += `${prefix} ${sign} ${exactAmount}\n<code>   ${tx.time}</code>\n<blockquote><code>${tx.otherAddr}</code></blockquote>\n`;
+            message += `${prefix} ${colorDot} ${sign} ${exactAmount}\n<blockquote>${tx.time}</blockquote><blockquote><code>${tx.otherAddr}</code></blockquote>\n`;
         });
     }
     return message;
