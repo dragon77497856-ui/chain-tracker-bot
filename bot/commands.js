@@ -69,12 +69,12 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
     if (recentTxs.length === 0) {
         message += `無符合條件的交易\n`;
     } else {
-        message += `<code>| 時間 | 類型 | 地址 | 金額</code>\n`;
+        message += `| 時間 | 類型 | 地址 | 金額\n`;
         recentTxs.forEach((tx) => {
             const type = tx.direction === 'out' ? '支出' : '收入';
             const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
-            message += `<code>|${shortTime}|${type}|</code>\n<code>${tx.otherAddr}</code><code>|${exactAmount}</code>\n`;
+            message += `<blockquote>|${shortTime}|${type}|</blockquote><code>${tx.otherAddr}</code>|${exactAmount}\n`;
         });
     }
     return message;
