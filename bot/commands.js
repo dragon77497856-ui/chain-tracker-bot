@@ -52,9 +52,12 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
 
     // 顯示餘額
     if (balanceInfo) {
+        const usdtStr = formatExactNumber(balanceInfo.usdt);
+        const trxStr = formatExactNumber(balanceInfo.trx);
+        const maxLen = Math.max(usdtStr.length, trxStr.length);
         message += `💰 餘額\n`;
-        message += `     🟢 USDT: <b>${formatExactNumber(balanceInfo.usdt)}</b>\n`;
-        message += `     🔴 TRX: <b>${formatExactNumber(balanceInfo.trx)}</b>\n`;
+        message += `<code>     USDT: </code><b>${usdtStr.padStart(maxLen)}</b>\n`;
+        message += `<code>     TRX:  </code><b>${trxStr.padStart(maxLen)}</b>\n`;
     }
 
     // 計算 30 天內 USDT 支出和收入
@@ -66,9 +69,12 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
             else usdtOut += tx.rawAmount;
         }
     });
+    const outStr = formatExactNumber(usdtOut);
+    const inStr = formatExactNumber(usdtIn);
+    const maxLen2 = Math.max(outStr.length, inStr.length);
     message += `📊 30天活動\n`;
-    message += `     📤 支出: <b>${formatExactNumber(usdtOut)}</b>\n`;
-    message += `     📥 收入: <b>${formatExactNumber(usdtIn)}</b>\n`;
+    message += `<code>     支出: </code><b>${outStr.padStart(maxLen2)}</b>\n`;
+    message += `<code>     收入: </code><b>${inStr.padStart(maxLen2)}</b>\n`;
 
     if (balanceInfo && balanceInfo.createTime) {
         message += `📆 創建時間: ${formatWalletDate(balanceInfo.createTime)}\n`;
