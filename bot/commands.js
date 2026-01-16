@@ -50,9 +50,11 @@ async function hasPermission(userId, db) {
 function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, allTxs = []) {
     let message = `🏦 <b>錢包查詢</b>\n\n📍 地址: <code>${address}</code>\n`;
 
-    // 顯示餘額和創建時間
+    // 顯示餘額
     if (balanceInfo) {
-        message += `💰 餘額: <b>${formatExactNumber(balanceInfo.usdt)}</b> USDT | <b>${formatExactNumber(balanceInfo.trx)}</b> TRX\n`;
+        message += `💰 餘額\n`;
+        message += `     USDT: <b>${formatExactNumber(balanceInfo.usdt)}</b>\n`;
+        message += `     TRX: <b>${formatExactNumber(balanceInfo.trx)}</b>\n`;
     }
 
     // 計算 30 天內 USDT 支出和收入
@@ -64,7 +66,9 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
             else usdtOut += tx.rawAmount;
         }
     });
-    message += `📊 30天活動  支出: ${formatExactNumber(usdtOut)}  收入: ${formatExactNumber(usdtIn)}\n`;
+    message += `📊 30天活動\n`;
+    message += `     支出: <b>${formatExactNumber(usdtOut)}</b>\n`;
+    message += `     收入: <b>${formatExactNumber(usdtIn)}</b>\n`;
 
     if (balanceInfo && balanceInfo.createTime) {
         message += `📆 創建時間: ${formatWalletDate(balanceInfo.createTime)}\n`;
