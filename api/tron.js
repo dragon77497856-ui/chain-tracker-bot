@@ -27,7 +27,7 @@ async function fetchAddressBalance(address) {
                 try {
                     const json = JSON.parse(data);
                     if (!json.data || json.data.length === 0) {
-                        resolve({ usdt: 0, trx: 0 });
+                        resolve({ usdt: 0, trx: 0, createTime: null });
                         return;
                     }
                     const account = json.data[0];
@@ -42,14 +42,16 @@ async function fetchAddressBalance(address) {
                             }
                         }
                     }
-                    resolve({ usdt, trx });
+                    // 獲取錢包創建時間
+                    const createTime = account.create_time || null;
+                    resolve({ usdt, trx, createTime });
                 } catch (e) {
-                    resolve({ usdt: 0, trx: 0 });
+                    resolve({ usdt: 0, trx: 0, createTime: null });
                 }
             });
         });
-        req.on('error', () => resolve({ usdt: 0, trx: 0 }));
-        req.on('timeout', () => { req.destroy(); resolve({ usdt: 0, trx: 0 }); });
+        req.on('error', () => resolve({ usdt: 0, trx: 0, createTime: null }));
+        req.on('timeout', () => { req.destroy(); resolve({ usdt: 0, trx: 0, createTime: null }); });
         req.end();
     });
 }

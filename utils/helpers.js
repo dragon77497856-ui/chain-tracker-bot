@@ -11,6 +11,23 @@ function formatNumber(num) {
     return num.toFixed(2);
 }
 
+// 顯示確切數字（帶千位分隔符）
+function formatExactNumber(num) {
+    if (num === 0) return '0';
+    const fixed = num % 1 === 0 ? num.toString() : num.toFixed(2);
+    return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// 格式化錢包創建時間
+function formatWalletDate(timestamp) {
+    if (!timestamp) return '未知';
+    const date = new Date(timestamp);
+    return date.toLocaleDateString('zh-TW', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        timeZone: 'Asia/Taipei'
+    });
+}
+
 function formatDate(timestamp) {
     if (!timestamp) return '未知';
     const date = new Date(timestamp);
@@ -47,7 +64,9 @@ function escapeHtml(text) {
 module.exports = {
     shortAddr,
     formatNumber,
+    formatExactNumber,
     formatDate,
+    formatWalletDate,
     getDefaultSettings,
     formatRange,
     matchesRange,

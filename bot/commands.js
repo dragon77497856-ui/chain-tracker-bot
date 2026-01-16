@@ -1,5 +1,5 @@
 // ================= Bot 命令 =================
-const { shortAddr, formatNumber, formatRange, getDefaultSettings, escapeHtml } = require('../utils/helpers');
+const { shortAddr, formatNumber, formatExactNumber, formatRange, formatWalletDate, getDefaultSettings, escapeHtml } = require('../utils/helpers');
 const { fetchAddressBalance, fetchFilteredTransactions } = require('../api/tron');
 
 const MAX_FREE_ADDRESSES = 5;
@@ -47,8 +47,17 @@ async function hasPermission(userId, db) {
 }
 
 // 構建總覽消息
-function buildOverviewMessage(address, recentTxs, settings) {
+function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) {
     let message = `🏦 <b>錢包查詢</b>\n\n📍 地址: <code>${address}</code>\n`;
+
+    // 顯示餘額和創建時間
+    if (balanceInfo) {
+        message += `💰 餘額: <b>${formatExactNumber(balanceInfo.usdt)}</b> USDT | <b>${formatExactNumber(balanceInfo.trx)}</b> TRX\n`;
+        if (balanceInfo.createTime) {
+            message += `📆 創建時間: ${formatWalletDate(balanceInfo.createTime)}\n`;
+        }
+    }
+
     if (recentTxs.length > 0) message += `⏰ 最後活動: ${recentTxs[0].time}\n`;
 
     let rangeStr = settings.mode === 'simple'
@@ -63,7 +72,9 @@ function buildOverviewMessage(address, recentTxs, settings) {
         recentTxs.forEach((tx, i) => {
             const prefix = i === recentTxs.length - 1 ? '└' : '├';
             const sign = tx.direction === 'out' ? '➖' : '➕';
-            message += `${prefix} ${sign} ${tx.amount}\n<blockquote><code>${tx.otherAddr}</code></blockquote>   📅 ${tx.time}\n`;
+            const tokenIcon = tx.token === 'USDT' ? '💵' : '🔷';
+            const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
+            message += `${prefix} ${sign} ${exactAmount}\n<blockquote><code>${tx.otherAddr}</code></blockquote>   ${tokenIcon} <i>${tx.time}</i>\n`;
         });
     }
     return message;
@@ -289,9 +300,13 @@ async function handleTrackAddress(bot, chatId, userId, address, store, PUBLIC_UR
 
     try {
         const settings = userSettings[userId];
-        const recentTxs = await fetchFilteredTransactions(address, 10, settings);
+        // 並行獲取餘額和交易記錄
+        const [balanceInfo, recentTxs] = await Promise.all([
+            fetchAddressBalance(address),
+            fetchFilteredTransactions(address, 10, settings)
+        ]);
         userCache[userId] = { address, txs: null, lastFetch: 0 };
-        const message = buildOverviewMessage(address, recentTxs, settings);
+        const message = buildOverviewMessage(address, recentTxs, settings, balanceInfo);
         const keyboard = buildMainKeyboard(address, PUBLIC_URL);
         await bot.deleteMessage(chatId, loadingMsg.message_id);
         await bot.sendMessage(chatId, message, {
