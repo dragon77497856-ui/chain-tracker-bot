@@ -79,7 +79,7 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
     if (recentTxs.length === 0) {
         message += `\n無符合條件的交易\n`;
     } else {
-        message += `\n<code>|   時間    |  類型 | 地址 | 金額</code>\n`;
+        message += `\n<code>|   時間    |  類型 | 地址 | 金額</code>（第1頁）\n`;
         recentTxs.forEach((tx) => {
             const type = tx.direction === 'out' ? '支出' : '收入';
             const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
@@ -90,18 +90,17 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null, 
     return message;
 }
 
-// 構建主鍵盤
+// 構建主鍵盤（第一頁）
 function buildMainKeyboard(address, PUBLIC_URL) {
     const chartUrl = `${PUBLIC_URL}/chart?address=${address}`;
     return {
         inline_keyboard: [
             [
-                { text: '📋 完整列表', callback_data: `list_${address}_1` },
-                { text: '📈 可視化圖表', url: chartUrl }
+                { text: '下一頁 ➡️', callback_data: `list_${address}_2` },
+                { text: '⚙️ 設置範圍', callback_data: `range_${address}` }
             ],
             [
-                { text: '⚙️ 設置範圍', callback_data: `range_${address}` },
-                { text: '🔄 刷新', callback_data: `refresh_${address}` }
+                { text: '📈 可視化圖表', url: chartUrl }
             ]
         ]
     };

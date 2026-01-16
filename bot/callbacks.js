@@ -444,16 +444,17 @@ async function handleListView(bot, chatId, userId, address, page, messageId, sto
         }
 
         const navButtons = [];
-        if (currentPage > 1) navButtons.push({ text: '⬅️ 上一頁', callback_data: `list_${address}_${currentPage - 1}` });
+        if (currentPage > 1) navButtons.push({ text: '⬅️ 上一頁', callback_data: currentPage === 2 ? `back_${address}` : `list_${address}_${currentPage - 1}` });
         navButtons.push({ text: `${currentPage} / ${totalPages}`, callback_data: 'noop' });
         if (currentPage < totalPages) navButtons.push({ text: '下一頁 ➡️', callback_data: `list_${address}_${currentPage + 1}` });
 
+        const chartUrl = `${PUBLIC_URL}/chart?address=${address}`;
         const keyboard = {
             inline_keyboard: [
                 navButtons,
                 [
                     { text: '⚙️ 設置範圍', callback_data: `range_${address}` },
-                    { text: '◀️ 返回', callback_data: `back_${address}` }
+                    { text: '📈 可視化圖表', url: chartUrl }
                 ]
             ]
         };
