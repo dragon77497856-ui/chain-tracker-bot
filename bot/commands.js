@@ -74,7 +74,7 @@ function buildOverviewMessage(address, recentTxs, settings, balanceInfo = null) 
             const type = tx.direction === 'out' ? '支出' : '收入';
             const shortTime = tx.time.replace(/\d{4}\//, '').replace(/\s*(上午|下午)/, ' ');
             const exactAmount = formatExactNumber(tx.rawAmount) + ' ' + tx.token;
-            message += `<blockquote>|${shortTime}|${type}|          |${exactAmount}</blockquote><code>${tx.otherAddr}</code>\n`;
+            message += `<code>${shortTime}  |${type}|    |${exactAmount}</code>\n<code>${tx.otherAddr}</code>\n`;
         });
     }
     return message;
