@@ -13,7 +13,8 @@ const db = require('./utils/database');
 // ================= 配置 =================
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const PORT = process.env.PORT || 3000;
-const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`;
+const PUBLIC_URL = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
+const USE_POLLING = !PUBLIC_URL || PUBLIC_URL.startsWith('http://127') || PUBLIC_URL.startsWith('http://localhost');
 
 // ================= 共享數據存儲 =================
 const store = {
@@ -29,7 +30,7 @@ const store = {
 };
 
 // ================= 初始化 Bot =================
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+const bot = new TelegramBot(BOT_TOKEN, { polling: USE_POLLING });
 
 // ================= 初始化 HTTP Server =================
 const server = http.createServer();
@@ -59,14 +60,22 @@ async function start() {
 
     // 啟動 HTTP 服務
     server.listen(PORT, '0.0.0.0', async () => {
-        console.log(`🚀 Server: ${PUBLIC_URL}`);
+        console.log(`🚀 Server: http://0.0.0.0:${PORT}`);
 
-        // 設置 Webhook
-        try {
-            await bot.setWebHook(`${PUBLIC_URL}/webhook/${BOT_TOKEN}`);
-            console.log(`🔗 Webhook 已設置`);
-        } catch (e) {
-            console.error('Webhook 設置失敗:', e.message);
+        if (USE_POLLING) {
+            console.log(`📡 使用 Polling 模式`);
+            // 確保刪除舊的 webhook
+            try {
+                await bot.deleteWebHook();
+            } catch (e) {}
+        } else {
+            // 設置 Webhook
+            try {
+                await bot.setWebHook(`${PUBLIC_URL}/webhook/${BOT_TOKEN}`);
+                console.log(`🔗 Webhook 已設置: ${PUBLIC_URL}`);
+            } catch (e) {
+                console.error('Webhook 設置失敗:', e.message);
+            }
         }
     });
 
